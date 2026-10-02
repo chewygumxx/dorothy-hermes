@@ -1,0 +1,12 @@
+#!/usr/bin/env sh
+# vim:set expandtab shiftwidth=4 filetype=sh:
+# SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/.husky/commit-msg
+#
+#
+
+bunx --bun --no-install commitlint --edit "$1"

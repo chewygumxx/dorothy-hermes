@@ -1,0 +1,55 @@
+# vim:set expandtab shiftwidth=4 filetype=yaml foldlevel=3:
+# SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/.github/workflows/ci.yaml
+#
+#
+
+# The shared standard checks (commitlint, header sync, generic lint and
+# format, metadata sync), then this repository's own `bun run check` against
+# the commit the header sync pushed. See chewygumxx/.github for each part.
+#
+# workflow_dispatch re-runs the metadata sync once the METADATA_APP_* secret
+# and variable are corrected.
+
+name: CI
+
+on:
+    push:
+        branches:
+            - main
+    pull_request:
+    workflow_dispatch: {}
+
+permissions:
+    contents: write
+    pull-requests: read
+
+# Not cancelled in progress: a newer run must not interrupt the header sync
+# part-way through its commit.
+concurrency:
+    group: ${{ github.workflow }}-${{ github.ref }}
+    cancel-in-progress: false
+
+jobs:
+    standard:
+        uses: chewygumxx/.github/.github/workflows/standard.yaml@v1
+        with:
+            metadata-client-id: ${{ vars.METADATA_APP_CLIENT_ID }}
+            # `bun run check` lints YAML with the repository's .yamllint.yaml,
+            # which needs node_modules that lint-format does not install.
+            yaml: false
+        secrets:
+            metadata-private-key: ${{ secrets.METADATA_APP_PRIVATE_KEY }}
+
+    check:
+        needs: standard
+        if: ${{ !cancelled() }}
+        permissions:
+            contents: read
+        uses: chewygumxx/.github/.github/workflows/lint.yaml@v1
+        with:
+            ref: ${{ needs.standard.outputs.sha }}

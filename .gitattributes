@@ -1,0 +1,11 @@
+# vim:set expandtab shiftwidth=4 filetype=gitattributes:
+# SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/.gitattributes
+#
+#
+
+* text=auto eol=lf

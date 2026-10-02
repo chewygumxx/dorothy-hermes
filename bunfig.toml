@@ -1,0 +1,22 @@
+# vim:set expandtab shiftwidth=4 filetype=toml:
+# SPDX-License-Identifier: GPL-3.0-only
+#:schema https://www.schemastore.org/bunfig.json
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/bunfig.toml
+#
+#
+
+#
+# https://bun.com/docs/runtime/bunfig
+#
+# Runs every package script on Bun, the CLIs whose shebang names node
+# included: `bun run` puts a `node` that is Bun first on `PATH`, nested
+# scripts too, so a Node installed elsewhere, such as a CI runner's, never
+# runs them.
+#
+
+[run]
+bun = true

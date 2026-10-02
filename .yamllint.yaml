@@ -1,0 +1,16 @@
+# vim:set expandtab shiftwidth=4 filetype=yaml foldlevel=3:
+# SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/.yamllint.yaml
+#
+#
+
+# https://yamllint.readthedocs.io/en/stable/configuration.html
+#
+# The house style from `@chewygumxx/yamllint-config`. yamllint resolves this
+# path against its working directory, so run it from the repository root; an
+# editor's linter can use this file as its root marker.
+extends: node_modules/@chewygumxx/yamllint-config/config.yaml

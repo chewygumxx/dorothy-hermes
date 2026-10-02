@@ -1,0 +1,44 @@
+{
+    "$schema": "https://www.schemastore.org/claude-code-settings.json",
+    "attribution": {
+        "commit": "",
+        "pr": "",
+        "sessionUrl": false
+    },
+    "enabledPlugins": {
+        "claude-code-setup@claude-plugins-official": true,
+        "claude-md-management@claude-plugins-official": true,
+        "code-review@claude-plugins-official": true,
+        "code-simplifier@claude-plugins-official": true,
+        "explanatory-output-style@claude-plugins-official": true,
+        "remember@claude-plugins-official": true,
+        "superpowers@claude-plugins-official": true
+    },
+    "hooks": {
+        "SessionStart": [
+            {
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/install-deps.sh\"",
+                        "statusMessage": "Installing dependencies",
+                        "timeout": 120
+                    }
+                ]
+            }
+        ],
+        "PostToolUse": [
+            {
+                "matcher": "Write|Edit",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/prohibit-em-dash.sh\"",
+                        "statusMessage": "Checking for em dashes",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ]
+    }
+}

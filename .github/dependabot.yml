@@ -1,0 +1,30 @@
+# vim:set expandtab shiftwidth=4 filetype=yaml foldlevel=3:
+# SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/.github/dependabot.yml
+#
+#
+
+# Dependabot reads a bun.lock only up to lockfileVersion 1, and Bun 1.4
+# writes 2, so the bun entries fail until dependabot-core supports it
+# (https://github.com/dependabot/dependabot-core/pull/16071). They stay so
+# that updates resume then; github-actions is unaffected.
+
+version: 2
+updates:
+    - package-ecosystem: bun
+      directory: /
+      schedule:
+          interval: weekly
+      commit-message:
+          prefix: build
+
+    - package-ecosystem: github-actions
+      directory: /
+      schedule:
+          interval: weekly
+      commit-message:
+          prefix: ci
