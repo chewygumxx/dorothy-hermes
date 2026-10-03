@@ -20,6 +20,21 @@
         "repo-metadata@chewygumxx": true,
         "shell-lint@chewygumxx": true
     },
+    "hooks": {
+        "PreToolUse": [
+            {
+                "matcher": "Bash|Read|Write|Edit|NotebookEdit",
+                "hooks": [
+                    {
+                        "type": "command",
+                        "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-secrets.sh\"",
+                        "statusMessage": "Guarding secrets",
+                        "timeout": 10
+                    }
+                ]
+            }
+        ]
+    },
     "extraKnownMarketplaces": {
         "chewygumxx": {
             "autoUpdate": true,

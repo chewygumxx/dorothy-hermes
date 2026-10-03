@@ -38,7 +38,7 @@ node = "26.5.1"
 #
 # Utilities
 #
-# `jq` parses the tool payload in `.claude/hooks/prohibit-em-dash.sh`.
+# `jq` parses the tool payload in `.claude/hooks/guard-secrets.sh`.
 #
 "aqua:jqlang/jq"       = "1"
 # `dotenvx` decrypts `.env` for `mise run up`.
