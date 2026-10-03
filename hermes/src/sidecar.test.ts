@@ -311,6 +311,47 @@ test("a fresh clone mints a new generation and refuses the old one's bundles", a
     assert.equal(remoteMain(url), null);
 });
 
+test("an interrupted first clone is cloned again, never served as a seed", async (t) => {
+    const url = bareRepo(t);
+    pushFiles(t, url, FULL);
+    const dir = tempDir(t);
+    const { deps } = sidecarDeps(dir, url);
+    // A clone killed part-way: .git and origin exist, no refs, no generation.
+    mkdirSync(deps.paths.checkout, { recursive: true });
+    git(["init", "--quiet"], deps.paths.checkout);
+    git(["remote", "add", "origin", url], deps.paths.checkout);
+    const bare = url.slice("file://".length);
+    renameSync(bare, `${bare}.away`);
+    await assert.rejects(
+        new Sidecar(deps).start(),
+        /clone dorothy-memory kept failing/,
+    );
+    assert.equal(restoreOf(deps.paths), null);
+    renameSync(`${bare}.away`, bare);
+    const { paths } = await started(t, url, {}, dir);
+    const restore = restoreOf(paths);
+    assert.equal(restore?.seed, false);
+    assert.equal(
+        restore?.files.find((f) => f.path === "memories/MEMORY.md")?.content,
+        "m1",
+    );
+});
+
+test("the empty-state guard sees files the fast-forward brings in", async (t) => {
+    const url = bareRepo(t);
+    const { sidecar, paths } = await started(t, url);
+    outbox(paths, sidecar.generation, { "sessions/state.sql": "SQL 1" });
+    await sidecar.cycle();
+    pushFiles(t, url, { "memories/MEMORY.md": "human" });
+    outbox(paths, sidecar.generation, { "sessions/state.sql": "SQL 2" });
+    await sidecar.cycle();
+    assert.match(
+        statusOf(paths)?.lastError ?? "",
+        /refusing a bundle without memories\/MEMORY\.md/,
+    );
+    assert.equal(remoteShow(url, "memories/MEMORY.md"), "human");
+});
+
 test("a symlink committed to the memory repository is replaced, not followed", async (t) => {
     const url = bareRepo(t);
     const outside = tempDir(t);

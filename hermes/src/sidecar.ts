@@ -137,7 +137,11 @@ export class Sidecar {
         const { paths, settings, log } = this.#deps;
         writeFileAtomic(paths.key, settings.memoryKey, 0o600);
         rmSync(join(paths.checkout, ".git/index.lock"), { force: true });
-        if (existsSync(join(paths.checkout, ".git"))) {
+        // The generation is minted only once a clone completes, so a checkout
+        // without one is an interrupted clone: serving it would offer hermes
+        // an empty seed while dorothy-memory holds history.
+        const generation = readTrimmed(paths.generation);
+        if (generation !== null && existsSync(join(paths.checkout, ".git"))) {
             // A crash mid-mirror leaves a half-written tree that restore.json
             // must not serve. Nothing is lost: consumed is recorded only after
             // the commit, so the outbox bundle is mirrored again.
@@ -145,7 +149,7 @@ export class Sidecar {
                 await this.#git.resetHard("HEAD");
             await this.#git.clean();
             await this.#git.setRemote(settings.memoryRepo);
-            this.#generation = readTrimmed(paths.generation) ?? this.#mint();
+            this.#generation = generation;
             this.#consumed = readTrimmed(paths.consumed);
             try {
                 await this.#git.fetch();
@@ -307,13 +311,14 @@ export class Sidecar {
         }
         this.status.largestFileBytes = largest;
         this.status.sizeWarning = largest > limits.warnBytes;
-        this.#guardEmpty(bundle);
         try {
             await this.#git.fetch();
             if ((await this.#git.unpushed()) === 0) await this.#fastForward();
         } catch (error) {
             log(`fetch failed; committing locally: ${errorMessage(error)}`);
         }
+        // After the fast-forward, so files only the remote head has are guarded.
+        this.#guardEmpty(bundle);
         mirror(paths.checkout, bundle.files);
         await this.#git.addAll();
         const changed = await this.#git.stagedPaths();
