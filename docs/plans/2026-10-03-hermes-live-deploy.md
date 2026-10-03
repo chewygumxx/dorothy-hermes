@@ -69,6 +69,11 @@ Deliberate departures from the spec, each folded back into it in Task 18:
   `snapshot.ts --once`.
 - `DOROTHY_HOST` names the server in sync commit messages; the container's
   own hostname is meaningless.
+- The sidecar records the last consumed bundle hash in `state/consumed`, and
+  bootstrap marks each container start in `<run>/booted`.
+- `dorothy-sync` gets `mem_limit: 1g` and `pids_limit: 128`, which the spec
+  leaves unset; Task 17 measures whether 1 GB suffices.
+- `mise run up` waits for health (`compose up --wait`).
 - The S15 ssh command gains `ConnectTimeout` and `ServerAlive*` options, and
   git has no overall timeout: a first clone of a long memory history must
   not be killed, while a stalled connection still ends.
@@ -6616,7 +6621,12 @@ Any Linux VM with at least 2 vCPU, 4 GB RAM and 20 GB disk. On it:
 
 - [ ] **Step 2: Create the repositories, keys and rulesets (S1, S7)**
 
-With the user's go-ahead:
+First the account controls S7 assumes. The user confirms, and the run record
+notes, that the account's second factor is a passkey or hardware key, and that
+<https://github.com/settings/tokens> lists no classic personal access token
+(fine-grained tokens are reviewed for scope and expiry).
+
+Then, with the user's go-ahead:
 
 ```bash
 gh repo create chewygumxx/dorothy-config --private
@@ -6628,12 +6638,24 @@ for repo in dorothy-config dorothy-memory; do
  "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}]}
 JSON
 done
-cd "$(mktemp -d)"
-ssh-keygen -q -t ed25519 -N '' -C dorothy-config -f config_key
-ssh-keygen -q -t ed25519 -N '' -C dorothy-memory -f memory_key
-gh repo deploy-key add config_key.pub --repo chewygumxx/dorothy-config --title dorothy-server
-gh repo deploy-key add memory_key.pub --repo chewygumxx/dorothy-memory --title dorothy-sync --allow-write
+keydir=$(mktemp -d)   # mode 0700; Step 4 reads the keys from here
+ssh-keygen -q -t ed25519 -N '' -C dorothy-config -f "$keydir/config_key"
+ssh-keygen -q -t ed25519 -N '' -C dorothy-memory -f "$keydir/memory_key"
+gh repo deploy-key add "$keydir/config_key.pub" --repo chewygumxx/dorothy-config --title dorothy-server
+gh repo deploy-key add "$keydir/memory_key.pub" --repo chewygumxx/dorothy-memory --title dorothy-sync --allow-write
 ```
+
+Verify each ruleset is active with no bypass actors, and record the output:
+
+```bash
+for repo in dorothy-config dorothy-memory; do
+  gh api "repos/chewygumxx/$repo/rulesets" --jq '.[] | .id' | while read -r id; do
+    gh api "repos/chewygumxx/$repo/rulesets/$id" --jq '{name, enforcement, bypass_actors}'
+  done
+done
+```
+
+Expected: each prints `"enforcement": "active"` and `"bypass_actors": []`.
 
 `dorothy-memory` must stay empty until the sidecar's first push: a README
 commit gives it a head without `sessions/state.sql`, which fails startup.
@@ -6655,18 +6677,25 @@ Push both to `dorothy-config` `main`.
 
 - [ ] **Step 4: Encrypt the secrets into `.env`**
 
-The user runs each `dotenvx set` (the values are theirs; nothing is pasted
-into this session). Use a dedicated LLM key with a spend limit (S12) and a
-Telegram bot made for Dorothy:
+The user runs each `dotenvx set` in the repository, in the same shell as
+Step 2 (the values are theirs; nothing is pasted into this session). Use a
+dedicated LLM key with a spend limit (S12) and a Telegram bot made for
+Dorothy. Secrets are read without echo, so they never reach shell history:
 
 ```bash
-dotenvx set DOROTHY_CONFIG_DEPLOY_KEY "$(base64 -w0 config_key)"
-dotenvx set DOROTHY_MEMORY_DEPLOY_KEY "$(base64 -w0 memory_key)"
-dotenvx set ANTHROPIC_API_KEY ...
-dotenvx set TELEGRAM_BOT_TOKEN ...
+dotenvx set DOROTHY_CONFIG_DEPLOY_KEY "$(base64 -w0 "$keydir/config_key")"
+dotenvx set DOROTHY_MEMORY_DEPLOY_KEY "$(base64 -w0 "$keydir/memory_key")"
+for name in ANTHROPIC_API_KEY TELEGRAM_BOT_TOKEN; do
+  printf '%s: ' "$name"; read -rs v; echo; dotenvx set "$name" "$v"; unset v
+done
 dotenvx set TELEGRAM_ALLOWED_USERS <your numeric Telegram id>
-shred -u config_key memory_key
+for name in DOROTHY_CONFIG_DEPLOY_KEY DOROTHY_MEMORY_DEPLOY_KEY ANTHROPIC_API_KEY TELEGRAM_BOT_TOKEN; do
+  [ "$(dotenvx get "$name" | wc -c)" -gt 1 ] || echo "EMPTY: $name"
+done
+shred -u "$keydir"/*_key && rm -r "$keydir"
 ```
+
+Expected: no `EMPTY:` line.
 
 Store `.env.keys` in the password manager. Confirm `.env` holds only
 `encrypted:` values (`grep -v '^#' .env | grep -v 'encrypted:'` prints only
@@ -6713,7 +6742,8 @@ them, since they hold conversation text.
 4. **Resources:** every 5 minutes for an hour,
    `docker stats --no-stream --format '{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.PIDs}}' >> ~/dorothy-stats.csv`;
    record peaks against the limits (4 GB and 512 pids for `hermes`; 1 GB
-   and 128 for `dorothy-sync`).
+   and 128 for `dorothy-sync`), and the largest bundle's size beside the
+   sidecar's peak (the 1 GB limit is a guess against the 256 MiB cap).
 5. **Conversation:** three messages to the bot; reply latency for each; one
    message from a non-allowlisted account (expect no service).
 6. **Sync:** after three intervals, the commits in `dorothy-memory`
@@ -6724,31 +6754,50 @@ them, since they hold conversation text.
    appears in `memories/` on GitHub.
 8. **Config delivery:** push a `SOUL.md` tweak; time until applied (at most
    one interval); gateway restart duration from the logs.
-9. **Shutdown and warm boot:** `docker compose down` duration, the final
-   snapshot's commit on GitHub, then `mise run up` time to healthy.
+9. **Shutdown and warm boot:** send one message to the bot first, so the
+   final snapshot has something to publish; then `docker compose down`
+   duration, the final snapshot's commit on GitHub, then `mise run up` time
+   to healthy.
 10. **Cold-restore drill:** `docker compose down`,
     `docker volume rm dorothy_hermes-data`, `mise run up`; time to healthy,
     `optimize-storage` duration, and whether Dorothy recalls the earlier
     conversation and the fact from item 7.
 11. **Security spot checks:** S1
     (`docker inspect` of `hermes` shows no `DOROTHY_MEMORY_DEPLOY_KEY`); S9
-    (`ss -tlnp` on the host shows no Docker listeners); S5, without printing
-    any value:
+    (`ss -tlnp` on the host shows no Docker listeners); S5 on the server,
+    over the whole history of the sidecar's own checkout, without printing
+    any value. The secrets are every `*_TOKEN`, `*_KEY`, `*_SECRET` and
+    `*_PASSWORD` value, each deploy key's decoded lines, and the
+    `API_SERVER_KEY` upstream generated:
 
     ```bash
-    git clone git@github.com:chewygumxx/dorothy-memory.git /tmp/dm
-    dotenvx get --format json | jq -r 'to_entries[] | select(.key | test("_(TOKEN|KEY|SECRET|PASSWORD)$")) | .value' |
-      while IFS= read -r v; do git -C /tmp/dm grep -qF -- "$v" && echo LEAK; done; echo scanned
+    dir=$(mktemp -d) && secrets="$dir/secrets"
+    {
+      dotenvx get --format json | jq -r 'to_entries[] | select(.key | test("_(TOKEN|KEY|SECRET|PASSWORD)$")) | .value'
+      for k in DOROTHY_CONFIG_DEPLOY_KEY DOROTHY_MEMORY_DEPLOY_KEY; do
+        dotenvx get "$k" | base64 -d | awk 'length > 20 && !/^-----/'
+      done
+      docker compose exec -T hermes sh -c "sed -n 's/^API_SERVER_KEY=//p' /opt/data/.env" | tr -d "\"'"
+    } | awk 'length >= 8' > "$secrets"
+    wc -l < "$secrets"
+    docker compose exec -T dorothy-sync git -C /var/lib/dorothy/state/memory log -p --all |
+      grep -cFf "$secrets"
+    shred -u "$secrets" && rm -r "$dir"
     ```
 
-    Expected: `scanned` alone.
-12. **Surprises:** anything that behaved differently from the specs.
+    Expected: a count of secrets of at least 5, then `0` matches.
+12. **Status files and health:** at the hour mark, the three status files
+    (`docker compose exec -T hermes cat /opt/data/dorothy/status/apply.json
+    /opt/data/dorothy/status/snapshot.json /var/lib/dorothy/restore/status.json`)
+    and each service's `docker inspect --format '{{json .State.Health.Log}}'`.
+13. **Surprises:** anything that behaved differently from the specs.
 
 - [ ] **Step 7: Commit the record**
 
 ```bash
+git add docs/notes
 bun run lint:md && bun run lint:emdash
-git add docs/notes && git commit -m "docs: Record the first live run"
+git commit -m "docs: Record the first live run"
 ```
 
 ---
@@ -6775,7 +6824,8 @@ source layout (`util.ts`, `files.ts`, `test-helpers.ts`, `platforms.json`,
 co-located tests), S5 (blob redaction before hex), the gateway test's
 previous-pid rule, `DOROTHY_HOST`, and the boot check's temporary home in
 `dorothy-snapshot`. Add every smoke-test finding from Task 16 that changed
-behaviour.
+behaviour, every Surprise from the live run, and the measured sidecar
+limits.
 
 - [ ] **Step 3: Update the README**
 
