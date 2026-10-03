@@ -2463,7 +2463,7 @@ function fail(message: string): never {
 
 export function validPath(path: string): boolean {
     if (path === "sessions/state.sql" || path === "cron/jobs.json") return true;
-    if (/[\\\u0000]/.test(path)) return false;
+    if (path.includes("\\") || path.includes("\0")) return false;
     const parts = path.split("/");
     if (parts.length < 2 || (parts[0] !== "memories" && parts[0] !== "skills")) return false;
     return parts.every((part) => part !== "" && !part.startsWith("."));
