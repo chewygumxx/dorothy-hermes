@@ -182,6 +182,27 @@ test("the generated registry has the shape settings expect", () => {
     assert.ok(real.extraAllowVariables.length > 0);
 });
 
+test("plugin platforms' allowlists are refused and cleaned too", () => {
+    const real = loadRegistry();
+    for (const name of [
+        "IRC_ALLOW_ALL_USERS",
+        "LINE_ALLOW_ALL_USERS",
+        "TEAMS_ALLOW_ALL_USERS",
+    ]) {
+        assert.throws(
+            () => hermesSettings({ ...base, [name]: "true" }, real),
+            new RegExp(name),
+        );
+    }
+    assert.throws(
+        () => hermesSettings({ ...base, SIMPLEX_ALLOWED_USERS: "*" }, real),
+        /SIMPLEX_ALLOWED_USERS contains/,
+    );
+    const names = allowlistNames(real);
+    for (const name of ["NTFY_ALLOWED_USERS", "A2A_ALLOW_ALL_USERS"])
+        assert.ok(names.includes(name), `${name} is not cleaned from .env`);
+});
+
 test("sidecar settings validate and default", () => {
     const settings = sidecarSettings({
         DOROTHY_MEMORY_REPO: "git@github.com:me/dorothy-memory.git",
