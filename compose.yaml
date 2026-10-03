@@ -59,7 +59,7 @@ services:
             - /opt/data:uid=10000,gid=10000,mode=0700
         environment:
             DOROTHY_MEMORY_DEPLOY_KEY: ${DOROTHY_MEMORY_DEPLOY_KEY:?set it in .env}
-            DOROTHY_MEMORY_REPO: ${DOROTHY_MEMORY_REPO:-git@github.com:chewygumxx/dorothy-memory.git}
+            DOROTHY_MEMORY_REPO: ${DOROTHY_MEMORY_REPO:-ssh://git@ssh.github.com:443/chewygumxx/dorothy-memory.git}
             DOROTHY_SYNC_INTERVAL: ${DOROTHY_SYNC_INTERVAL:-900}
             DOROTHY_BUNDLE_MAX_BYTES: ${DOROTHY_BUNDLE_MAX_BYTES:-268435456}
             DOROTHY_ALLOW_EMPTY: ${DOROTHY_ALLOW_EMPTY:-}
@@ -113,7 +113,7 @@ services:
         environment:
             S6_BEHAVIOUR_IF_STAGE2_FAILS: "2"
             S6_KILL_FINISH_MAXTIME: "60000"
-            DOROTHY_CONFIG_REPO: ${DOROTHY_CONFIG_REPO:-git@github.com:chewygumxx/dorothy-config.git}
+            DOROTHY_CONFIG_REPO: ${DOROTHY_CONFIG_REPO:-ssh://git@ssh.github.com:443/chewygumxx/dorothy-config.git}
             DOROTHY_CONFIG_REPO_NAME: ${DOROTHY_CONFIG_REPO_NAME:-}
             DOROTHY_CONFIG_DEPLOY_KEY: ${DOROTHY_CONFIG_DEPLOY_KEY:?set it in .env}
             DOROTHY_SYNC_INTERVAL: ${DOROTHY_SYNC_INTERVAL:-900}
