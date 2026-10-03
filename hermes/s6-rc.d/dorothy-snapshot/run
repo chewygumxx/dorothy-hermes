@@ -1,0 +1,6 @@
+#!/command/with-contenv sh
+# shellcheck shell=sh
+# SPDX-License-Identifier: GPL-3.0-only
+# Boot check, then a snapshot every DOROTHY_SYNC_INTERVAL seconds.
+export HOME=/opt/data
+exec /command/s6-setuidgid hermes /usr/local/bin/node /opt/dorothy/src/snapshot.ts
