@@ -65,6 +65,7 @@ function applyDeps(deps: SnapshotDeps): ApplyDeps {
         paths: configPaths(deps.paths.home),
         log: deps.log,
         timing: deps.timing,
+        signal: deps.signal,
     };
 }
 
@@ -257,6 +258,12 @@ if (import.meta.main) {
     process.once("SIGTERM", () => controller.abort());
     const deps: SnapshotDeps = {
         ...realClock,
+        // A stop ends waits at once, so the gateway test gives up the locks
+        // before the final snapshot needs them.
+        sleep: (ms) =>
+            delay(ms, undefined, { signal: controller.signal }).catch(
+                () => undefined,
+            ),
         env: process.env,
         paths: IMAGE_CONTAINER_PATHS,
         hermes: createHermesCli(undefined, controller.signal),

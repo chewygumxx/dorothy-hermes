@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { type TestContext, test } from "node:test";
 import {
     type ApplyDeps,
+    ApplyInterrupted,
     applyConfig,
     bootCheck,
     configPaths,
@@ -213,6 +214,51 @@ test("a push deleting config.yaml leaves the running config alone", async (t) =>
     assert.match(recorded.lastError ?? "", /config\.yaml is missing/);
     assert.deepEqual(hermes.calls, []);
     assert.equal(await applyConfig(deps), "unchanged");
+});
+
+test("a shutdown during the gateway test neither rolls back nor records", async (t) => {
+    const { url, paths, deps } = await setup(t, 20_000);
+    const sha = pushFiles(t, url, { "SOUL.md": "soul 2" });
+    const controller = new AbortController();
+    const gateway = fakeGateway(paths.home, deps, 20_000);
+    // Once the container stops, every CLI call fails, so the slot reads as gone.
+    const hermes = fakeHermes({
+        status: () => (controller.signal.aborted ? null : gateway.status()),
+        restart: gateway.restart,
+    });
+    const sleep = deps.sleep;
+    const stopping: ApplyDeps = {
+        ...deps,
+        hermes,
+        signal: controller.signal,
+        sleep: async (ms) => {
+            controller.abort();
+            await sleep(ms);
+        },
+    };
+    await assert.rejects(applyConfig(stopping), ApplyInterrupted);
+    assert.equal(status(paths.applyStatus).rolledBackSha, undefined);
+    assert.notEqual(status(paths.applyStatus).appliedSha, sha);
+    assert.deepEqual(hermes.calls, ["restart", "start"]);
+});
+
+test("a shutdown while the boot check waits for the slot stops it", async (t) => {
+    const { deps, logs } = await setup(t);
+    const controller = new AbortController();
+    const stopping: ApplyDeps = {
+        ...deps,
+        hermes: fakeHermes({ status: () => null }),
+        signal: controller.signal,
+        sleep: async (ms) => {
+            controller.abort();
+            await deps.sleep(ms);
+        },
+    };
+    await assert.rejects(bootCheck(stopping), ApplyInterrupted);
+    assert.equal(
+        logs.some((m) => /never registered/.test(m)),
+        false,
+    );
 });
 
 test("missing config files are named", async (t) => {

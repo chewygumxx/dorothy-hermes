@@ -109,7 +109,12 @@ export interface ApplyDeps extends Clock {
     paths: ConfigPaths;
     log: Log;
     timing?: GatewayTestTiming;
+    /** Set when the container stops: the CLI then fails, which is not a verdict. */
+    signal?: AbortSignal;
 }
+
+/** A shutdown cut the gateway test short; nothing was rolled back or recorded. */
+export class ApplyInterrupted extends Error {}
 
 export type ApplyOutcome = "unchanged" | "applied" | "rolled-back" | "failed";
 
@@ -123,27 +128,42 @@ export async function gatewayTest(
     previousPid: number | null,
 ): Promise<boolean> {
     const timing = deps.timing ?? GATEWAY_TEST;
+    const status = async () => {
+        const answer = await deps.hermes.gatewayStatus();
+        if (deps.signal?.aborted)
+            throw new ApplyInterrupted("stopped during the gateway test");
+        return answer;
+    };
+    const sleep = async (ms: number) => {
+        await deps.sleep(ms);
+        if (deps.signal?.aborted)
+            throw new ApplyInterrupted("stopped during the gateway test");
+    };
     if (previousPid !== null) {
         const drained = deps.now() + timing.drainWithinMs;
         while (deps.now() < drained) {
-            const status = await deps.hermes.gatewayStatus();
-            if (!status?.up || status.pid !== previousPid) break;
-            await deps.sleep(timing.pollMs);
+            const current = await status();
+            if (!current?.up || current.pid !== previousPid) break;
+            await sleep(timing.pollMs);
         }
     }
     const deadline = deps.now() + timing.upWithinMs;
     let pid: number | null = null;
     while (deps.now() < deadline) {
-        const status = await deps.hermes.gatewayStatus();
-        if (status?.up && status.pid !== null && status.pid !== previousPid) {
-            pid = status.pid;
+        const current = await status();
+        if (
+            current?.up &&
+            current.pid !== null &&
+            current.pid !== previousPid
+        ) {
+            pid = current.pid;
             break;
         }
-        await deps.sleep(timing.pollMs);
+        await sleep(timing.pollMs);
     }
     if (pid === null) return false;
-    await deps.sleep(timing.stableForMs);
-    const later = await deps.hermes.gatewayStatus();
+    await sleep(timing.stableForMs);
+    const later = await status();
     return later?.up === true && later.pid === pid;
 }
 
@@ -262,6 +282,8 @@ export async function bootCheck(
 ): Promise<ApplyOutcome> {
     const deadline = deps.now() + registerWithinMs;
     while ((await deps.hermes.gatewayStatus()) === null) {
+        if (deps.signal?.aborted)
+            throw new ApplyInterrupted("stopped before the gateway registered");
         if (deps.now() >= deadline) {
             deps.log("the gateway slot never registered");
             break;
