@@ -2922,7 +2922,7 @@ git commit -m "feat: Read and write trees without following links"
   `interface GitOptions { keyPath?; knownHostsPath?; env?: NodeJS.ProcessEnv; timeoutMs?: number; signal?: AbortSignal }`;
   `sshCommand(keyPath: string, knownHostsPath: string): string`;
   `type PushResult = "pushed" | "rejected" | "failed"`;
-  `class Git { readonly dir: string; constructor(dir, options?); run(args, cwd?): Promise<string>; clone(url): Promise<void>; head(): Promise<string | null>; remoteHead(): Promise<string | null>; fetch(): Promise<void>; isAncestor(a, b): Promise<boolean>; resetHard(ref): Promise<void>; unpushed(): Promise<number>; addAll(): Promise<void>; stagedPaths(): Promise<string[]>; commit(message): Promise<void>; push(): Promise<PushResult>; setRemote(url): Promise<void> }`.
+  `class Git { readonly dir: string; constructor(dir, options?); run(args, cwd?): Promise<string>; clone(url): Promise<void>; head(): Promise<string | null>; remoteHead(): Promise<string | null>; fetch(): Promise<void>; isAncestor(a, b): Promise<boolean>; resetHard(ref): Promise<void>; unpushed(): Promise<number>; addAll(): Promise<void>; clean(): Promise<void>; stagedPaths(): Promise<string[]>; commit(message): Promise<void>; push(): Promise<PushResult>; setRemote(url): Promise<void> }`.
 - Produces (`test-helpers.ts`): `GIT_ENV`; `git(args: string[], cwd: string): string`;
   `bareRepo(t): string` (a `file://` URL); `pushFiles(t, url, files, message?): string`;
   `remoteMain(url): string | null`; `remoteShow(url, path): string | null`.
@@ -3232,6 +3232,11 @@ export class Git {
 
     async addAll(): Promise<void> {
         await this.run(["add", "--all"]);
+    }
+
+    /** Removes every untracked file, ignored ones included. */
+    async clean(): Promise<void> {
+        await this.run(["clean", "-f", "-f", "-d", "-x", "--quiet"]);
     }
 
     async stagedPaths(): Promise<string[]> {
@@ -5144,6 +5149,39 @@ test("unpushed commits survive an outage; a moved remote is never forced", async
     assert.equal(remoteMain(url), human);
 });
 
+test("a refused bundle does not hold back an earlier commit's push", async (t) => {
+    const url = bareRepo(t);
+    const bare = url.slice("file://".length);
+    const { sidecar, paths, deps } = await started(t, url);
+    outbox(paths, sidecar.generation, FULL);
+    await sidecar.cycle();
+    renameSync(bare, `${bare}.away`);
+    outbox(paths, sidecar.generation, { ...FULL, "memories/MEMORY.md": "m2" });
+    await sidecar.cycle();
+    assert.equal(statusOf(paths)?.pendingCommits, 1);
+    // Without MEMORY.md, the empty-state guard refuses the next bundle.
+    outbox(paths, sidecar.generation, { "sessions/state.sql": "SQL 2" });
+    renameSync(`${bare}.away`, bare);
+    await deps.sleep(3_600_000);
+    await sidecar.cycle();
+    assert.equal(statusOf(paths)?.pendingCommits, 0);
+    assert.equal(remoteShow(url, "memories/MEMORY.md"), "m2");
+    assert.match(statusOf(paths)?.lastError ?? "", /refusing a bundle without memories\/MEMORY\.md/);
+});
+
+test("a crash mid-mirror is undone at startup", async (t) => {
+    const url = bareRepo(t);
+    const { sidecar, paths, dir } = await started(t, url);
+    outbox(paths, sidecar.generation, FULL);
+    await sidecar.cycle();
+    writeFileSync(join(paths.checkout, "memories/MEMORY.md"), "half");
+    writeFileSync(join(paths.checkout, "memories/STRAY.md"), "stray");
+    await started(t, url, {}, dir);
+    const files = restoreOf(paths)?.files ?? [];
+    assert.equal(files.find((f) => f.path === "memories/MEMORY.md")?.content, "m1");
+    assert.equal(files.some((f) => f.path === "memories/STRAY.md"), false);
+});
+
 test("a stale index.lock is removed at startup", async (t) => {
     const url = bareRepo(t);
     const { paths, dir } = await started(t, url);
@@ -5336,6 +5374,11 @@ export class Sidecar {
         writeFileAtomic(paths.key, settings.memoryKey, 0o600);
         rmSync(join(paths.checkout, ".git/index.lock"), { force: true });
         if (existsSync(join(paths.checkout, ".git"))) {
+            // A crash mid-mirror leaves a half-written tree that restore.json
+            // must not serve. Nothing is lost: consumed is recorded only after
+            // the commit, so the outbox bundle is mirrored again.
+            if ((await this.#git.head()) !== null) await this.#git.resetHard("HEAD");
+            await this.#git.clean();
             await this.#git.setRemote(settings.memoryRepo);
             this.#generation = readTrimmed(paths.generation) ?? this.#mint();
             this.#consumed = readTrimmed(paths.consumed);
@@ -5368,14 +5411,24 @@ export class Sidecar {
     async cycle(): Promise<void> {
         this.status.loopAt = iso(this.#deps.now());
         this.#save();
-        let failed = false;
-        try {
-            await this.#publish();
-            await this.#pushIfDue();
-        } catch (error) {
-            failed = true;
-            this.status.lastError = errorMessage(error);
-            this.#deps.log(`publish failed: ${this.status.lastError}`);
+        // Separate attempts: a refused bundle must not hold back earlier commits.
+        const errors: string[] = [];
+        for (const [step, attempt] of [
+            ["publish", () => this.#publish()],
+            ["push", () => this.#pushIfDue()],
+        ] as const) {
+            try {
+                await attempt();
+            } catch (error) {
+                errors.push(`${step} failed: ${errorMessage(error)}`);
+            }
+        }
+        const failed = errors.length > 0;
+        if (failed) {
+            const lastError = errors.join("; ");
+            // A refused bundle is read again every cycle; log it once.
+            if (lastError !== this.status.lastError) this.#deps.log(lastError);
+            this.status.lastError = lastError;
         }
         try {
             this.status.pendingCommits = await this.#git.unpushed();
@@ -5551,14 +5604,14 @@ drops.
 - [ ] **Step 4: Run the tests**
 
 Run: `mise exec -- node --test hermes/src/sidecar.test.ts`
-Expected: 14 pass.
+Expected: 17 pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 bunx biome check --write hermes/src && bun run typecheck
 git add hermes/src/sidecar.ts hermes/src/sidecar.test.ts
-git commit -m "feat: Publish bundles from the dorothy-sync sidecar"
+git commit -m "feat: Publish bundles from the sync sidecar"
 ```
 
 ---
