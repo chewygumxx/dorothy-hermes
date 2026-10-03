@@ -7,7 +7,6 @@
     },
     "enabledPlugins": {
         "claude-md-management@claude-plugins-official": true,
-        "code-review@claude-plugins-official": true,
         "code-simplifier@claude-plugins-official": true,
         "explanatory-output-style@claude-plugins-official": true,
         "remember@claude-plugins-official": true,
@@ -26,7 +25,10 @@
                 "hooks": [
                     {
                         "type": "command",
-                        "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-secrets.sh\"",
+                        "command": "sh",
+                        "args": [
+                            "${CLAUDE_PROJECT_DIR}/.claude/hooks/guard-secrets.sh"
+                        ],
                         "statusMessage": "Guarding secrets",
                         "timeout": 10
                     }
