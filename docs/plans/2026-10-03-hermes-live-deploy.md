@@ -3285,7 +3285,8 @@ git commit -m "feat: Wrap git with fast-forward-only pushes"
 **Interfaces:**
 
 - Produces: `interface GatewayStatus { up: boolean; pid: number | null }`;
-  `interface HermesCli { snapshot(label: string): Promise<string>; deleteSnapshot(dir: string): Promise<void>; restartGateway(): Promise<void>; startGateway(): Promise<void>; gatewayStatus(): Promise<GatewayStatus | null>; optimizeStorage(): Promise<void> }`
+  `interface HermesCli { snapshot(label: string): Promise<string>; deleteSnapshot(dir: string): Promise<void>; restartGateway(): Promise<void>; startGateway(): Promise<void>; gatewayStatus(): Promise<GatewayStatus | null>; optimizeStorage(): Promise<string> }`
+  (`optimizeStorage` returns its output)
   (`gatewayStatus` is null while the slot is unregistered);
   `interface CliPaths { home; bin; svstat; slot }`; `IMAGE_CLI_PATHS`;
   `interface ContainerPaths { home; run; restore; syncStatus; outbox; knownHosts }`;
@@ -3339,6 +3340,7 @@ export function fakeHermes(options: FakeHermesOptions = {}): FakeHermes {
         },
         async optimizeStorage() {
             calls.push("optimize");
+            return "";
         },
     };
 }
@@ -3422,7 +3424,8 @@ export interface HermesCli {
     startGateway(): Promise<void>;
     /** Null while the gateway-default slot is not registered. */
     gatewayStatus(): Promise<GatewayStatus | null>;
-    optimizeStorage(): Promise<void>;
+    /** Returns the command's output: it exits 0 even when it skips the work. */
+    optimizeStorage(): Promise<string>;
 }
 
 export interface CliPaths {
@@ -3519,7 +3522,7 @@ export function createHermesCli(paths: CliPaths = IMAGE_CLI_PATHS, signal?: Abor
             }
         },
         async optimizeStorage() {
-            await run(paths.bin, ["sessions", "optimize-storage", "--yes"], signal);
+            return run(paths.bin, ["sessions", "optimize-storage", "--yes"], signal);
         },
     };
 }
@@ -4432,7 +4435,12 @@ async function restore(deps: BootstrapDeps): Promise<void> {
         restoreDatabase(fileBytes(sql).toString("utf8"), temp);
         renameSync(temp, join(home, "state.db"));
         writeRestoredFiles(home, snapshot.files);
-        await deps.hermes.optimizeStorage();
+        const optimized = (await deps.hermes.optimizeStorage()).trim();
+        if (optimized) deps.log(`optimize-storage: ${optimized}`);
+        // Wording recorded by the Task 1 probe; a skip leaves CJK search unindexed.
+        if (/not enough free disk|nothing to do/i.test(optimized)) {
+            deps.log("optimize-storage skipped its work; CJK search may miss restored sessions");
+        }
         deps.log(`restored dorothy-memory ${snapshot.memorySha}`);
     }
     writeJson(marker, {
