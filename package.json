@@ -31,7 +31,7 @@
         "typescript": "^7.0.2"
     },
     "scripts": {
-        "check": "bun run typecheck && bun run lint:biome && bun run lint:md && bun run lint:yaml && bun run lint:toml && bun run lint:emdash",
+        "check": "bun run typecheck && bun run lint:biome && bun run lint:md && bun run lint:yaml && bun run lint:toml && bun run lint:sh && bun run lint:emdash",
         "commit": "cz",
         "format": "biome format --write . && bun run format:yaml && bun run format:toml",
         "format:check": "biome format .",
@@ -41,6 +41,7 @@
         "lint:biome": "biome ci .",
         "lint:emdash": "git grep -nIP --untracked '\\x{2014}'; test $? -eq 1",
         "lint:md": "git ls-files -z '*.md' | xargs -0 remark --frail --quiet --no-stdout",
+        "lint:sh": "sh scripts/lint-sh.sh",
         "lint:toml": "git ls-files -z '*.toml' | xargs -0 -r tombi format --check && git ls-files -z '*.toml' | xargs -0 -r tombi lint --error-on-warnings",
         "lint:yaml": "git ls-files -z '*.yaml' '*.yml' | xargs -0 -r prettier --check && git ls-files -z '*.yaml' '*.yml' | xargs -0 -r yamllint --strict",
         "prepare": "test -d node_modules/husky && husky || true",
