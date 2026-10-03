@@ -101,9 +101,10 @@ skills that every later cold boot restores.
   root inside that container nor `docker exec` into it can find it.
 - `dorothy-sync` runs no agent code, listens on no port, and sits on its own
   network (S3).
-- Where available (GitHub Pro for private personal repositories), a ruleset
-  on `dorothy-memory` `main` blocks force pushes and branch deletion, with no
-  bypass for deploy keys. This is defence in depth; the sidecar never forces.
+- A ruleset on `dorothy-memory` `main` blocks force pushes and branch
+  deletion, with no bypass for deploy keys (the account has GitHub Pro, which
+  private personal repositories need for rulesets). This is defence in depth;
+  the sidecar never forces.
 
 **Verification.** Smoke: `docker inspect` lists no `memory_deploy_key` for
 `hermes`; inside `hermes`, `/run/secrets` lacks it and no process environment
@@ -231,8 +232,7 @@ commands, and the webhook applies it within seconds. Push access to
 - Applies use only `origin/main` fetched over SSH with pinned host keys; the
   webhook payload selects nothing.
 - The config deploy key is read-only.
-- Where available, a ruleset on `dorothy-config` `main` blocks force pushes
-  and deletion.
+- A ruleset on `dorothy-config` `main` blocks force pushes and deletion.
 - The GitHub account uses a passkey or hardware second factor, and holds no
   classic personal access tokens with repository scope.
 
