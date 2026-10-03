@@ -53,6 +53,10 @@ Success:
 - Our code never opens the live `state.db`. Hermes snapshots it with its own
   patched SQLite (`hermes backup --quick`); we read only the offline copy.
 - Single user, single server. One server at a time owns `dorothy-memory`.
+- The agent is untrusted. The
+  [security design](2026-10-03-hermes-security-design.md) sets the trust model
+  and its threat identifiers (`S1` to `S15`) are cited below; where the two
+  documents disagree, it wins.
 
 ## Out of scope
 
@@ -73,10 +77,11 @@ dorothy-hermes (this repo, deployed)       dorothy-config (you edit)
   mise.toml         adds node, dotenvx       skills/<name>/...
   hermes/
     known_hosts     GitHub SSH host keys   dorothy-memory (server writes)
-    cont-init.d/                             memories/MEMORY.md
-      005-dorothy-bootstrap                  memories/USER.md
-    cont-finish.d/                           skills/<agent-made>/...
-      dorothy-final-sync                     sessions/state.sql
+    bin/dorothy-cycle                        memories/MEMORY.md
+    cont-init.d/                             memories/USER.md
+      005-dorothy-bootstrap                  skills/<agent-made>/...
+    cont-finish.d/                           sessions/state.sql
+      dorothy-final-sync
     s6-rc.d/
       dorothy-sync/                        (run, type, dependencies.d)
       dorothy-webhook/                     (run, type, dependencies.d)
@@ -88,36 +93,46 @@ dorothy-hermes (this repo, deployed)       dorothy-config (you edit)
 ### Compose stack
 
 - `hermes`: `nousresearch/hermes-agent:<calver>@sha256:<digest>`, command
-  `gateway run`, a named volume `hermes-data` at `/opt/data`, and `hermes/`
-  bind-mounted read-only:
+  `gateway run`, named volumes `hermes-data` at `/opt/data` and
+  `dorothy-state` at `/var/lib/dorothy` (S3), and `hermes/` bind-mounted
+  read-only:
   - `hermes/cont-init.d/005-dorothy-bootstrap` to
     `/etc/cont-init.d/005-dorothy-bootstrap`
   - `hermes/cont-finish.d/dorothy-final-sync` to
     `/etc/cont-finish.d/dorothy-final-sync`
   - each `hermes/s6-rc.d/<service>` directory and registration file to the same
     path under `/etc/s6-overlay/s6-rc.d/`
-  - `hermes/src` and `hermes/known_hosts` to `/opt/dorothy/`
+  - `hermes/bin`, `hermes/src` and `hermes/known_hosts` to `/opt/dorothy/`
 
-  No host ports are published. Environment: the secrets below, the
+  No host ports are published (S9). Environment: the secrets below, the
   non-secret settings below, `S6_BEHAVIOUR_IF_STAGE2_FAILS=2`, and
-  `S6_SERVICES_GRACETIME` matching `stop_grace_period: 90s`. A `healthcheck`
-  runs `node /opt/dorothy/src/health.ts`.
+  `S6_SERVICES_GRACETIME` matching `stop_grace_period: 90s`. Hardening
+  (`no-new-privileges`, dropped capabilities, limits) is as S10. A
+  `healthcheck` runs
+  `/command/s6-setuidgid hermes node /opt/dorothy/src/health.ts`.
 - `cloudflared`: `cloudflare/cloudflared` pinned the same way, `tunnel run`
-  with `TUNNEL_TOKEN`. The tunnel's only ingress rule routes the webhook
-  hostname to `http://hermes:9000`. It sits in the compose profile `tunnel`,
-  which `mise run up` enables and CI does not.
+  with `TUNNEL_TOKEN`, hardened as S10. The tunnel routes the webhook
+  hostname to `http://hermes:9000` and everything else to `http_status:404`
+  (S8). It sits in the compose profile `tunnel`, which `mise run up` enables
+  and CI does not.
 
 ### Paths in the volume
 
-| Path                              | Owner         | Contents                     |
-| --------------------------------- | ------------- | ---------------------------- |
-| `/opt/data/SOUL.md`, `config.yaml` | copied config | from `dorothy-config`        |
-| `/opt/data/dorothy/config/`       | git checkout  | `dorothy-config`             |
-| `/opt/data/dorothy/memory/`       | git checkout  | `dorothy-memory` staging     |
-| `/opt/data/dorothy/bootstrapped`  | bootstrap     | both commit SHAs, ISO time   |
-| `/opt/data/dorothy/status/`       | sync, apply   | `sync.json`, `apply.json`    |
-| `/run/dorothy/*.key`              | bootstrap     | deploy keys (tmpfs, `0600`)  |
-| `/run/dorothy/*.lock`             | sync, apply   | lock directories (tmpfs)     |
+| Path                                | Owner            | Contents                                  |
+| ----------------------------------- | ---------------- | ----------------------------------------- |
+| `/opt/data/SOUL.md`, `config.yaml`  | `hermes`         | copied from `dorothy-config`              |
+| `/opt/data/dorothy/config/`         | `hermes`         | `dorothy-config` checkout                 |
+| `/opt/data/dorothy/outbox/`         | `hermes`         | `bundle.json`, the hand-off to publish    |
+| `/opt/data/dorothy/status/`         | `hermes`         | `apply.json`                              |
+| `/var/lib/dorothy/memory/`          | `dorothy`        | `dorothy-memory` checkout                 |
+| `/var/lib/dorothy/bootstrapped`     | root             | both commit SHAs, ISO time                |
+| `/var/lib/dorothy/status/`          | `dorothy`        | `sync.json`                               |
+| `/run/dorothy/private/`             | `dorothy`, 0700  | memory deploy key                         |
+| `/run/dorothy/hermes/`              | `hermes`, 0750   | config key, webhook secret, `apply.lock`  |
+| `/run/dorothy/sync.lock`            | root             | sync cycle lock                           |
+
+`/run/dorothy` is tmpfs, so keys never touch disk and a container restart
+clears stale locks.
 
 Config files are copied, never symlinked: upstream's boot hook refuses to
 operate through symlinked paths. Hand-written skills are not copied: the user's
@@ -127,8 +142,9 @@ which Hermes loads read-only.
 ### Repository access
 
 Two GitHub deploy keys: read-only on `dorothy-config`, read-write on
-`dorothy-memory`. Each git invocation sets `GIT_SSH_COMMAND` to
-`ssh -i /run/dorothy/<repo>.key -o IdentitiesOnly=yes
+`dorothy-memory`. Only the publish step, running as `dorothy`, can read the
+memory key (S1). Each git invocation sets `GIT_SSH_COMMAND` to
+`ssh -i <key> -o IdentitiesOnly=yes
 -o UserKnownHostsFile=/opt/dorothy/known_hosts -o StrictHostKeyChecking=yes`.
 Commits are authored as `Dorothy <noreply@dorothy.invalid>`.
 
@@ -139,25 +155,36 @@ parameters, so tests substitute fakes.
 
 ```text
 hermes/src/
-  bootstrap.ts   entry: clone or fetch, apply config, cold restore, marker
-  sync.ts        entry: the sync loop; --once runs a single cycle
-  webhook.ts     entry: the HTTP listener and apply queue
-  health.ts      entry: exits 0 or 1 from status files and gateway
-  final-sync.ts  entry: one sync cycle at shutdown
+  bootstrap.ts   entry (hermes): config checkout and apply, cold restore
+  snapshot.ts    entry (hermes): fallback apply, backup, dump, write bundle
+  publish.ts     entry (dorothy): validate bundle, redact, commit, push;
+                 --fetch only clones or fetches the memory checkout
+  webhook.ts     entry (hermes): the HTTP listener and apply queue
+  health.ts      entry (hermes): exits 0 or 1 from status files and gateway
+  bundle.ts      write the snapshot hand-off; open and validate it (S2)
+  redact.ts      replace known secret values in bundle content (S5)
   dump.ts        dumpDatabase(path) -> SQL text; restoreDatabase(sql, path)
   config.ts      applyConfig(): copy files, keep *.prev, restore on rollback
   git.ts         thin wrapper over the git binary (execFile, never a shell)
   hermes.ts      HermesCli interface: backup(), restartGateway(), gatewayUp()
   status.ts      read and write status files atomically (write temp, rename)
-  lock.ts        withLock(name, fn): mkdir-based lock under /run/dorothy
-  settings.ts    reads and validates the environment once, at startup
+  lock.ts        withLock(name, fn): mkdir-based lock, used for apply.lock
+  settings.ts    reads and validates the environment once, at startup (S6)
 ```
 
-Shell stubs (`005-dorothy-bootstrap`, each service `run`, `dorothy-final-sync`)
-only drop privileges and `exec`:
-`s6-setuidgid hermes node /opt/dorothy/src/<entry>.ts`. The bootstrap stub first
-creates `/opt/data/dorothy` and `/run/dorothy` as root and chowns them to
-`hermes`.
+Shell code is limited to stubs that prepare `/run/dorothy` and drop
+privileges. They never touch a path `hermes` can write (S4).
+
+- `005-dorothy-bootstrap` (root): boot steps 1 and 4 below, and runs steps 2
+  and 3 through `s6-setuidgid`.
+- `bin/dorothy-cycle` (root): takes `sync.lock`, runs `snapshot.ts` as
+  `hermes`, then `publish.ts` as `dorothy` with the snapshot's exit status,
+  and releases the lock. The `dorothy-sync` service, the final sync and a
+  manual sync all run it.
+- `dorothy-sync/run` (root): sleeps one interval, runs `dorothy-cycle`, and
+  repeats.
+- `dorothy-webhook/run`: `exec s6-setuidgid hermes node
+  /opt/dorothy/src/webhook.ts`.
 
 ## Boot sequence
 
@@ -166,19 +193,33 @@ finds our `SOUL.md` and `config.yaml` present, does not seed defaults, and runs
 its config-schema migrations on ours. `02-reconcile-profiles` then starts the
 gateway.
 
-1. Write the deploy keys from the environment to `/run/dorothy/`.
-2. Clone `dorothy-config`, or fetch it and hard-reset to `origin/main`. Copy
-   `SOUL.md` and `config.yaml` into `/opt/data`. Warn when `config.yaml` does
-   not contain the string `/opt/data/dorothy/config/skills` (no YAML parser in
-   the standard library; the user's file declares `skills.external_dirs`).
-3. Clone or fetch `dorothy-memory`.
-   - Cold volume (`/opt/data/state.db` absent): `restoreDatabase` from
+1. Root prepares:
+   - adds the `dorothy` user (UID 10001, supplementary group `hermes`) when
+     absent;
+   - creates `/run/dorothy` and its subdirectories, writes the deploy keys and
+     webhook secret into them, and deletes those variables from
+     `/run/s6/container_environment` (S1);
+   - sets the `/var/lib/dorothy` mount point to `dorothy:hermes`, `0750`;
+   - records whether `/opt/data/state.db` exists (cold or warm volume).
+2. As `dorothy`, `publish.ts --fetch`: clone `dorothy-memory` into
+   `/var/lib/dorothy/memory`, or fetch it and fast-forward when the local
+   branch is behind. Local commits not yet pushed are kept.
+3. As `hermes`, `bootstrap.ts`:
+   - Validate settings (S6).
+   - Clone `dorothy-config`, or fetch it and hard-reset to `origin/main`. Copy
+     `SOUL.md` and `config.yaml` into `/opt/data`. Warn when `config.yaml`
+     does not contain the string `/opt/data/dorothy/config/skills` (no YAML
+     parser in the standard library; the user's file declares
+     `skills.external_dirs`).
+   - Cold volume: `restoreDatabase` from the memory checkout's
      `sessions/state.sql` into a temporary file in `/opt/data`, then rename it
      to `state.db`; nothing has it open yet. Copy `memories/*.md` and
      `skills/*` into place.
    - Warm volume: the volume wins and nothing is copied from the memory
-     repository. The volume is never older than what it last pushed.
-4. Write `/opt/data/dorothy/bootstrapped` with both commit SHAs.
+     checkout. The volume is never older than what it last pushed.
+4. Root writes `/var/lib/dorothy/bootstrapped` with both commit SHAs.
+
+Any failing step exits non-zero, which stops the container.
 
 When GitHub is unreachable:
 
@@ -192,47 +233,60 @@ memory, and the sync loop would then push that emptiness to `dorothy-memory`.
 
 ## Sync loop
 
-`dorothy-sync` runs one cycle every `DOROTHY_SYNC_INTERVAL` seconds (default
-900), starting one interval after boot. A cycle:
+`dorothy-sync` runs `dorothy-cycle` every `DOROTHY_SYNC_INTERVAL` seconds
+(default 900), starting one interval after boot. Both steps return without
+effect when `/var/lib/dorothy/bootstrapped` is missing.
 
-1. Returns without effect when `/opt/data/dorothy/bootstrapped` is missing.
-2. Fetches `dorothy-config` and, when `origin/main` moved, runs the same apply
+The snapshot step, as `hermes`:
+
+1. Fetches `dorothy-config` and, when `origin/main` moved, runs the same apply
    as the webhook (the fallback for lost deliveries).
-3. Runs `hermes backup --quick -o <tmp>.zip`, extracts `state.db` to a
-   temporary directory, and writes `dumpDatabase` output to the staging
-   checkout's `sessions/state.sql`.
-4. Mirrors into the staging checkout, deletions included:
-   `memories/MEMORY.md`, `memories/USER.md`, and `skills/` except entries
-   named in `skills/.bundled_manifest` and dotfiles.
-5. Commits only when `git status --porcelain` is non-empty, with the message
+2. Runs `hermes backup --quick -o <tmp>.zip`, extracts `state.db` to a
+   temporary directory, and runs `dumpDatabase` on it.
+3. Collects `memories/MEMORY.md`, `memories/USER.md`, and `skills/` except
+   entries named in `skills/.bundled_manifest` and dotfiles.
+4. Writes the dump and the collected files to
+   `/opt/data/dorothy/outbox/bundle.json` (temporary file, then rename;
+   mode `0640`).
+
+The publish step, as `dorothy`:
+
+1. Opens and validates the bundle (S2). When the snapshot step failed, it
+   records that failure and only retries pushing pending commits.
+2. Redacts known secret values (S5), then mirrors the bundle into the
+   checkout, deletions included: files under `memories/` and `skills/` that
+   the bundle no longer lists are removed.
+3. Commits only when `git status --porcelain` is non-empty, with the message
    `chore(sync): Snapshot from <hostname>` and a body listing which of
    sessions, memories and skills changed.
-6. Pushes, fast-forward only.
+4. Pushes, fast-forward only.
    - Network failure: the commit stays local; the next cycle pushes it.
    - Rejected because the remote has commits that are not ours: record
      `pushRejected` in `status/sync.json`, log an error each cycle, and stop
      pushing until a person resolves it. Never rebase, never force.
-7. Writes `status/sync.json`: `lastSuccessAt`, `lastError`, `pendingCommits`,
+5. Writes `status/sync.json`: `lastSuccessAt`, `lastError`, `pendingCommits`,
    `pushRejected`.
 
 ### Locking and status
 
-The sync loop, the webhook and the final sync are separate processes. Two
-locks, each a directory created with `mkdir` under `/run/dorothy` (tmpfs, so a
-container restart clears a stale lock), serialise them:
+The sync cycle and the webhook are separate processes. Two locks, each a
+directory created with `mkdir`, serialise them:
 
-- `apply.lock` around every config apply, whether the webhook or the sync
-  loop's fallback started it. Only an apply writes `status/apply.json`.
-- `sync.lock` around every sync cycle, including the final sync. Only a sync
-  cycle writes `status/sync.json` or touches the memory checkout.
+- `sync.lock` in root-owned `/run/dorothy`, held by `dorothy-cycle` around
+  both steps, so the service loop, the final sync and a manual sync never
+  overlap. Only the publish step writes `status/sync.json` or touches the
+  memory checkout.
+- `apply.lock` in `/run/dorothy/hermes`, around every config apply, whether
+  the webhook or the snapshot step's fallback started it. Only an apply
+  writes `status/apply.json`.
 
 A process waits for a held lock rather than skipping its work, except the
-sync loop's fallback apply, which skips when `apply.lock` is held (the holder
-is already applying).
+snapshot step's fallback apply, which skips when `apply.lock` is held (the
+holder is already applying).
 
-`final-sync.ts` runs one cycle from `cont-finish.d` at shutdown. Implementation
-confirms s6-overlay v3's stage 3 order (whether the gateway is already down);
-either order is safe because `hermes backup` is consistent.
+`cont-finish.d/dorothy-final-sync` runs `dorothy-cycle` once at shutdown.
+Implementation confirms s6-overlay v3's stage 3 order (whether the gateway is
+already down); either order is safe because `hermes backup` is consistent.
 
 ### Dump format
 
@@ -258,11 +312,14 @@ type fails the dump loudly rather than being silently dropped.
 
 ## Webhook
 
-`dorothy-webhook` listens with `node:http` on `0.0.0.0:9000`, reachable only on
-the compose network.
+`dorothy-webhook` runs as `hermes` and listens with `node:http` on
+`0.0.0.0:9000`, reachable only on the compose network. It reads its secret
+from `/run/dorothy/hermes/webhook.secret`.
 
 1. Only `POST /github`; anything else is `404`. Bodies over 1 MiB are `413`.
-2. HMAC-SHA256 of the raw body with `DOROTHY_WEBHOOK_SECRET`, compared to
+   `headersTimeout` is 10 s, `requestTimeout` 15 s, `keepAliveTimeout` 5 s
+   (S8).
+2. HMAC-SHA256 of the raw body bytes, before parsing, compared to
    `X-Hub-Signature-256` with `timingSafeEqual`. Missing or wrong is `401`.
 3. `ping` is `200`. A `push` whose `repository.full_name` is the config
    repository and whose `ref` is `refs/heads/main` is accepted with `202`.
@@ -292,18 +349,22 @@ Restarts interrupt any in-flight reply; config pushes are rare and deliberate.
 `dotenvx run -- docker compose --profile tunnel up -d`. Process environment
 overrides the placeholder `.env` that upstream seeds in the volume, so no
 plaintext secret is written to it. Decrypted values are visible to
-`docker inspect`, which already implies root on the host.
+`docker inspect`, which already implies root on the host. The bootstrap stub
+moves the deploy keys and webhook secret into `/run/dorothy` and removes them
+from the environment Hermes and its children receive (S1).
 
-| Variable                                   | Secret | Consumer          |
-| ------------------------------------------ | ------ | ----------------- |
-| `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | yes | Hermes       |
-| Platform tokens (e.g. `TELEGRAM_BOT_TOKEN`) | yes   | Hermes            |
-| `DOROTHY_CONFIG_DEPLOY_KEY` (base64)       | yes    | bootstrap         |
-| `DOROTHY_MEMORY_DEPLOY_KEY` (base64)       | yes    | bootstrap         |
-| `DOROTHY_WEBHOOK_SECRET`                   | yes    | webhook           |
-| `TUNNEL_TOKEN`                             | yes    | cloudflared       |
-| `DOROTHY_CONFIG_REPO`, `DOROTHY_MEMORY_REPO` | no   | bootstrap, sync   |
-| `DOROTHY_SYNC_INTERVAL`                    | no     | sync              |
+| Variable                                         | Secret | Consumer              |
+| ------------------------------------------------ | ------ | --------------------- |
+| `ANTHROPIC_API_KEY` or `CLAUDE_CODE_OAUTH_TOKEN` | yes    | Hermes                |
+| Platform tokens (e.g. `TELEGRAM_BOT_TOKEN`)      | yes    | Hermes                |
+| `DOROTHY_CONFIG_DEPLOY_KEY` (base64)             | yes    | bootstrap stub        |
+| `DOROTHY_MEMORY_DEPLOY_KEY` (base64)             | yes    | bootstrap stub        |
+| `DOROTHY_WEBHOOK_SECRET`                         | yes    | bootstrap stub        |
+| `TUNNEL_TOKEN`                                   | yes    | cloudflared           |
+| `*_ALLOWED_USERS` for each enabled platform      | no     | Hermes, settings (S6) |
+| `DOROTHY_CONFIG_REPO`, `DOROTHY_MEMORY_REPO`     | no     | bootstrap, sync       |
+| `DOROTHY_SYNC_INTERVAL`                          | no     | sync                  |
+| `DOROTHY_BUNDLE_MAX_BYTES`                       | no     | publish (S2)          |
 
 Non-secret settings live in `compose.yaml`. Repository URLs accept any git URL,
 which is how tests use `file://` remotes. `settings.ts` rejects a missing or
@@ -314,20 +375,25 @@ malformed variable at startup with a message naming it.
 `health.ts` reads both status files and exits 1 when any of these hold, and 0
 otherwise:
 
-- `/opt/data/dorothy/bootstrapped` is missing.
+- `/var/lib/dorothy/bootstrapped` is missing.
 - `lastSuccessAt` is older than three sync intervals (after the first
   interval).
 - `pushRejected` or `configRolledBack` is set.
 - `hermes` reports the gateway down.
 
+The health check is an operational signal, not a security control: the
+agent can write `status/apply.json` (S13).
+
 Logs go to stdout with `[dorothy-bootstrap]`, `[dorothy-sync]` and
 `[dorothy-webhook]` prefixes, read with `docker compose logs`.
 
-- Fresh server: install Docker and mise, clone, add `.env.keys`,
-  `mise run up`.
-- Upgrade: merge the Dependabot pull request once CI is green, then
-  `git pull && mise run up` on the server.
-- Sync now: `docker compose exec hermes node /opt/dorothy/src/sync.ts --once`.
+- Fresh server: install Docker and mise, apply the host checklist (S11),
+  clone, add `.env.keys`, `mise run up`. Once per account: the GitHub
+  rulesets (S1, S7) and the Cloudflare rules (S8).
+- Upgrade: read upstream's release notes and advisories, merge the
+  Dependabot pull request once CI is green, then `git pull && mise run up` on
+  the server.
+- Sync now: `docker compose exec hermes /opt/dorothy/bin/dorothy-cycle`.
 
 ## Testing
 
@@ -346,9 +412,15 @@ temporary bare repositories over `file://`.
   filtering; `ping`; the body cap; collapsing of concurrent pushes; rollback
   when the fake gateway stays down; a concurrent fallback apply skips while
   the webhook holds `apply.lock`.
-- `sync`: no commit without changes; mirrored deletions; bundled-skill
-  exclusion; the bootstrap-marker guard; a non-fast-forward is recorded and
-  never forced; local commits survive an unreachable remote.
+- `snapshot`: bundled-skill and dotfile exclusion; the bootstrap-marker
+  guard; the fallback apply skips while `apply.lock` is held.
+- `publish`: no commit without changes; mirrored deletions; the
+  bootstrap-marker guard; a non-fast-forward is recorded and never forced;
+  local commits survive an unreachable remote; a failed snapshot still
+  pushes pending commits; `--fetch` keeps unpushed local commits.
+- `bundle` and `redact`: the rejections in S2 and the redaction forms in S5.
+- `settings`: missing or malformed variables; a platform token without its
+  allowlist (S6).
 - `bootstrap`: cold and warm volumes; unreachable remotes (warm continues,
   cold exits non-zero); the `external_dirs` warning.
 
@@ -364,11 +436,12 @@ stands in for a platform.
 
 1. Cold boot from a memory fixture containing a sample `state.sql`; the
    container becomes healthy.
-2. `sync.ts --once` commits to the memory fixture, and its `state.sql`
+2. `dorothy-cycle` commits to the memory fixture, and its `state.sql`
    restores to the sample's rows.
 3. A `SOUL.md` change pushed to the config fixture plus a signed request to
    `:9000` is applied and the gateway restarts.
 4. A broken `config.yaml` pushed the same way is rolled back and recorded.
+5. The security design's smoke test additions.
 
 `dependabot.yml` gains the `docker-compose` ecosystem, so each Hermes bump is a
 pull request whose smoke test restores through the new image's migrations
