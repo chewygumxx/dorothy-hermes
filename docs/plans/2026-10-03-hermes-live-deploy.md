@@ -1604,6 +1604,9 @@ git commit -m "feat: Validate settings and refuse open access"
 **Interfaces:**
 
 - Produces: `SECRET_NAME: RegExp`; `MIN_SECRET_LENGTH = 8`;
+  `interface DotenvSpan { text: string; name?: string; value?: string; invalid?: boolean }`;
+  `dotenvSpans(text: string): DotenvSpan[]` (python-dotenv's grammar; the
+  spans' texts join back into the input);
   `parseDotenv(text: string): Map<string, string>`;
   `collectSecrets(sources: Iterable<[string, string | undefined]>): Map<string, string>`
   (value to name);
@@ -1616,7 +1619,7 @@ git commit -m "feat: Validate settings and refuse open access"
 ```ts
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { collectSecrets, parseDotenv, Redactor } from "./redact.ts";
+import { collectSecrets, dotenvSpans, parseDotenv, Redactor } from "./redact.ts";
 
 test("named secrets are redacted as written", () => {
     const redactor = new Redactor(
@@ -1665,22 +1668,32 @@ test("longer secrets are replaced before the secrets they contain", () => {
     assert.equal(redactor.text("abcdefgh-ijklmnop"), "[REDACTED:B_TOKEN]");
 });
 
-test("dotenv lines are read as upstream writes them", () => {
-    const parsed = parseDotenv(
-        [
-            "# comment",
-            "API_SERVER_KEY=plain-value-1",
-            'export QUOTED_TOKEN="quoted value 2"',
-            "SINGLE_SECRET='single value 3'",
-            "",
-            "not a line",
-        ].join("\n"),
-    );
-    assert.deepEqual([...parsed], [
+test("dotenv text is read as python-dotenv reads it", () => {
+    const text = [
+        "# comment",
+        "API_SERVER_KEY=plain-value-1 # trailing comment",
+        'export QUOTED_TOKEN="say \\"hi\\" \\\\ 2"',
+        "SINGLE_SECRET='single value 3'",
+        "'QUOTED_KEY'=value-4",
+        'MULTI_TOKEN="line one',
+        'line two"',
+        "",
+        "not a line",
+        'BROKEN_TOKEN="unterminated',
+    ].join("\n");
+    assert.deepEqual([...parseDotenv(text)], [
         ["API_SERVER_KEY", "plain-value-1"],
-        ["QUOTED_TOKEN", "quoted value 2"],
+        ["QUOTED_TOKEN", 'say "hi" \\ 2'],
         ["SINGLE_SECRET", "single value 3"],
+        ["QUOTED_KEY", "value-4"],
+        ["MULTI_TOKEN", "line one\nline two"],
     ]);
+    const spans = dotenvSpans(text);
+    assert.equal(spans.map((span) => span.text).join(""), text);
+    assert.deepEqual(
+        spans.filter((span) => span.invalid).map((span) => span.text.trim()),
+        ["not a line", 'BROKEN_TOKEN="unterminated'],
+    );
 });
 ```
 
@@ -1696,20 +1709,110 @@ Expected: FAIL, module not found.
 export const SECRET_NAME = /_(TOKEN|KEY|SECRET|PASSWORD)$/;
 export const MIN_SECRET_LENGTH = 8;
 
-const DOTENV_LINE = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/;
+/** One piece of a `.env` file; joining every span's text gives the file back. */
+export interface DotenvSpan {
+    text: string;
+    name?: string;
+    value?: string;
+    /** A line python-dotenv skips with a warning. */
+    invalid?: boolean;
+}
+
+// python-dotenv's grammar (dotenv/parser.py), which upstream loads `.env` with.
+const BLANK = /\s+/y;
+const EXPORT = /export[^\S\r\n]+/y;
+const QUOTED_KEY = /'([^']+)'/y;
+const KEY = /[^=#\s]+/y;
+const GAP = /[^\S\r\n]*/y;
+const EQUALS = /=[^\S\r\n]*/y;
+const SINGLE = /'((?:\\'|[^'])*)'/y;
+const DOUBLE = /"((?:\\"|[^"])*)"/y;
+const UNQUOTED = /[^\r\n]*/y;
+const END = /[^\S\r\n]*(?:#[^\r\n]*)?[^\S\r\n]*(?:\r\n|\n|\r|$)/y;
+const REST = /[^\r\n]*(?:\r|\n|\r\n)?/y;
+const ESCAPES: Record<string, string> = {
+    "\\": "\\",
+    "'": "'",
+    '"': '"',
+    a: "\u0007",
+    b: "\b",
+    f: "\f",
+    n: "\n",
+    r: "\r",
+    t: "\t",
+    v: "\v",
+};
+
+interface Binding {
+    name?: string;
+    value?: string;
+    /** Where reading stopped; on failure, python-dotenv skips the rest of that line. */
+    end: number;
+    failed: boolean;
+}
+
+function binding(source: string, start: number): Binding {
+    let index = start;
+    const step = (pattern: RegExp): RegExpExecArray | null => {
+        pattern.lastIndex = index;
+        const match = pattern.exec(source);
+        if (match) index += match[0].length;
+        return match;
+    };
+    const failed = (): Binding => {
+        step(REST);
+        return { end: index, failed: true };
+    };
+    let name: string | undefined;
+    let value: string | undefined;
+    step(EXPORT);
+    if (source[index] !== "#") {
+        const key = source[index] === "'" ? step(QUOTED_KEY)?.[1] : step(KEY)?.[0];
+        if (key === undefined) return failed();
+        name = key;
+        step(GAP);
+        if (step(EQUALS)) {
+            const quote = source[index];
+            if (quote === "'" || quote === '"') {
+                const match = step(quote === "'" ? SINGLE : DOUBLE);
+                if (!match) return failed();
+                value = (match[1] ?? "").replace(
+                    quote === "'" ? /\\([\\'])/g : /\\([\\'"abfnrtv])/g,
+                    (_, escaped: string) => ESCAPES[escaped] ?? escaped,
+                );
+            } else {
+                value = (step(UNQUOTED)?.[0] ?? "").replace(/\s+#.*/, "").trimEnd();
+            }
+        }
+    }
+    if (!step(END)) return failed();
+    return { name, value, end: index, failed: false };
+}
+
+/** Splits `.env` text exactly as python-dotenv reads it, keeping every byte. */
+export function dotenvSpans(source: string): DotenvSpan[] {
+    const spans: DotenvSpan[] = [];
+    let index = 0;
+    while (index < source.length) {
+        BLANK.lastIndex = index;
+        const blank = BLANK.exec(source);
+        if (blank) {
+            index += blank[0].length;
+            spans.push({ text: blank[0] });
+            continue;
+        }
+        const entry = binding(source, index);
+        const text = source.slice(index, entry.end);
+        index = entry.end;
+        spans.push(entry.failed ? { text, invalid: true } : { text, name: entry.name, value: entry.value });
+    }
+    return spans;
+}
 
 export function parseDotenv(text: string): Map<string, string> {
     const values = new Map<string, string>();
-    for (const line of text.split(/\r?\n/)) {
-        if (line.trimStart().startsWith("#")) continue;
-        const match = DOTENV_LINE.exec(line);
-        if (!match) continue;
-        let value = match[2] ?? "";
-        const quote = value[0];
-        if (value.length >= 2 && (quote === '"' || quote === "'") && value.endsWith(quote)) {
-            value = value.slice(1, -1);
-        }
-        values.set(match[1] ?? "", value);
+    for (const span of dotenvSpans(text)) {
+        if (span.name !== undefined && span.value !== undefined) values.set(span.name, span.value);
     }
     return values;
 }
@@ -3802,11 +3905,11 @@ git commit -m "feat: Apply config with a gateway test and rollback"
 **Interfaces:**
 
 - Consumes: `hermesSettings`, `allowlistNames`, `loadRegistry` (Task 4);
-  `restoreDatabase` (Task 6); `openBundle`, `readTrustedBundle`, `fileBytes`
-  (Task 7); `emptyDirectory`, `removeUnlisted`, `skillDirectory`,
-  `writeTreeFile` (Task 8); `ContainerPaths`, `IMAGE_CONTAINER_PATHS`,
-  `createHermesCli` (Task 10); `configGit`, `configPaths`, `copyConfig`,
-  `skillsWarning` (Task 11).
+  `dotenvSpans` (Task 5); `restoreDatabase` (Task 6); `openBundle`,
+  `readTrustedBundle`, `fileBytes` (Task 7); `emptyDirectory`, `removeUnlisted`,
+  `skillDirectory`, `writeTreeFile` (Task 8); `ContainerPaths`,
+  `IMAGE_CONTAINER_PATHS`, `createHermesCli` (Task 10); `configGit`,
+  `configPaths`, `copyConfig`, `skillsWarning` (Task 11).
 - Produces:
   `interface BootstrapDeps extends Clock { env: Env; registry: PlatformRegistry; paths: ContainerPaths; hermes: HermesCli; log: Log; gitEnv?; retryForMs?; outboxWaitMs? }`;
   `bootstrap(deps: BootstrapDeps): Promise<void>`;
@@ -4017,7 +4120,11 @@ test(".env loses provided and allowlist variables; pairing is emptied", async (t
             "# upstream comment",
             "TELEGRAM_ALLOWED_USERS=999",
             'export GATEWAY_ALLOW_ALL_USERS="true"',
+            "'GATEWAY_ALLOW_ALL_USERS'=true",
+            'GATEWAY_ALLOWED_USERS="1,',
+            '*"',
             "DOROTHY_CONFIG_REPO=somewhere-else",
+            "not a line",
             "API_SERVER_KEY=keep-me-123",
         ].join("\n"),
         "pairing/approved.json": "{}",
@@ -4063,6 +4170,7 @@ import { restoreDatabase } from "./dump.ts";
 import { emptyDirectory, removeUnlisted, skillDirectory, writeTreeFile } from "./files.ts";
 import type { Git } from "./git.ts";
 import { type ContainerPaths, createHermesCli, type HermesCli, IMAGE_CONTAINER_PATHS } from "./hermes.ts";
+import { dotenvSpans } from "./redact.ts";
 import { allowlistNames, type Env, hermesSettings, loadRegistry, type PlatformRegistry } from "./settings.ts";
 import { type ApplyStatus, readJson, readText, writeFileAtomic, writeJson } from "./status.ts";
 import { type Clock, errorMessage, iso, type Log, logger, realClock, retry } from "./util.ts";
@@ -4078,24 +4186,30 @@ export interface BootstrapDeps extends Clock {
     outboxWaitMs?: number;
 }
 
-const DOTENV_NAME = /^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=/;
-
 /**
  * Upstream loads .env over the process environment, so anything the
  * deployment provides, and every allowlist, must not survive there (S6).
+ * Entries are read with upstream's grammar and dropped whole, multi-line
+ * values included; a line upstream cannot parse is dropped too.
  */
 export function cleanDotenv(path: string, env: Env, allowlists: string[]): string[] {
     const text = readText(path);
     if (text === "") return [];
     const drop = new Set(allowlists);
     const removed: string[] = [];
-    const kept = text.split("\n").filter((line) => {
-        const name = DOTENV_NAME.exec(line)?.[1];
+    const kept = dotenvSpans(text).filter((span) => {
+        if (span.invalid) {
+            removed.push("an unparsable line");
+            return false;
+        }
+        const name = span.name;
         if (name === undefined || (!drop.has(name) && !(env[name] ?? "").trim())) return true;
         removed.push(name);
         return false;
     });
-    if (removed.length > 0) writeFileAtomic(path, kept.join("\n"), 0o600);
+    if (removed.length > 0) {
+        writeFileAtomic(path, kept.map((span) => span.text).join(""), 0o600);
+    }
     return removed;
 }
 
