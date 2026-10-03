@@ -30,5 +30,7 @@ tags:
   mistakes are in scope; guard with rulesets, not "outside the model"
 - [No Python](./no-python.md): TypeScript first, bash if impractical; Python
   only as upstream's code inside the image
+- [Deploy tuning on server](./deploy-tuning-on-server.md): limits and sizing
+  are checked on the live server, not local tests; sidecar OOM and gc numbers
 
 <!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->
