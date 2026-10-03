@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
     standard:
-        uses: chewygumxx/.github/.github/workflows/standard.yaml@v1
+        uses: chewygumxx/.github/.github/workflows/standard.yaml@6a93bf782466c25b173b05d92d8b5b10dc356441 # v1
         with:
             metadata-client-id: ${{ vars.METADATA_APP_CLIENT_ID }}
             # `bun run check` lints YAML with the repository's .yamllint.yaml,
@@ -50,6 +50,22 @@ jobs:
         if: ${{ !cancelled() }}
         permissions:
             contents: read
-        uses: chewygumxx/.github/.github/workflows/lint.yaml@v1
+        uses: chewygumxx/.github/.github/workflows/lint.yaml@6a93bf782466c25b173b05d92d8b5b10dc356441 # v1
         with:
             ref: ${{ needs.standard.outputs.sha }}
+
+    test:
+        runs-on: ubuntu-latest
+        permissions:
+            contents: read
+        steps:
+            - name: Checkout
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  persist-credentials: false
+
+            - name: Setup Toolchain
+              uses: jdx/mise-action@7a4e45a543138629540c9a1616d08632b893e492 # v5.0.1
+
+            - name: Unit Tests
+              run: mise run test

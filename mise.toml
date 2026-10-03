@@ -31,14 +31,18 @@ min_version = "2026.9.0"
 #
 # Runtimes
 #
-bun = "1.4"
+bun  = "1.4"
+# Node runs our TypeScript in the image; tests run on the same version.
+node = "26.5.1"
 
 #
 # Utilities
 #
 # `jq` parses the tool payload in `.claude/hooks/prohibit-em-dash.sh`.
 #
-"aqua:jqlang/jq" = "1"
+"aqua:jqlang/jq"       = "1"
+# `dotenvx` decrypts `.env` for `mise run up`.
+"aqua:dotenvx/dotenvx" = "1"
 
 #
 # YAML
@@ -58,3 +62,15 @@ bun = "1.4"
 # against the schema its `#:schema` line names.
 #
 "aqua:tombi-toml/tombi" = "1.5.5"
+
+[tasks.test]
+description = "Unit tests under the image's Node"
+run         = "node --test --test-reporter=spec 'hermes/src/**/*.test.ts'"
+
+[tasks.smoke]
+description = "Boot the stack against fixture repositories"
+run         = "sh smoke/run.sh"
+
+[tasks.up]
+description = "Start Dorothy"
+run         = "DOROTHY_HOST=$(hostname) dotenvx run -- docker compose up -d --wait --wait-timeout 600"
