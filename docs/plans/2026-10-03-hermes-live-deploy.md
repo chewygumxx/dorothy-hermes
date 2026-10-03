@@ -2611,8 +2611,8 @@ git commit -m "feat: Define and validate the bundle format"
   `interface TreeOptions { skipDirectory?(path: string): boolean; includeFile?(path: string): boolean }`;
   `collectTree(root: string, top: string, options?: TreeOptions): BundleFile[]`
   (sorted, dotfiles and non-regular files skipped, links never followed);
-  `writeTreeFile(root: string, file: BundleFile): void` (replaces a link or
-  file standing where a directory belongs);
+  `writeTreeFile(root: string, file: BundleFile): void` (writes aside and
+  renames; replaces a link or file standing where a directory belongs);
   `removeUnlisted(root: string, top: string, keep: Set<string>): void`;
   `emptyDirectory(path: string): void`;
   `skillDirectory(path: string): string | null`.
@@ -2712,6 +2712,8 @@ test("skillDirectory finds the directory a restore replaces", () => {
     assert.equal(skillDirectory("skills/name/SKILL.md"), "skills/name");
     assert.equal(skillDirectory("skills/cat/name/deep/file.md"), "skills/cat/name");
     assert.equal(skillDirectory("skills/loose.md"), null);
+    // A category's own file: replacing the category would delete its bundled skills.
+    assert.equal(skillDirectory("skills/cat/DESCRIPTION.md"), null);
 });
 ```
 
@@ -2723,6 +2725,7 @@ Expected: FAIL, module not found.
 - [ ] **Step 3: Implement `files.ts`**
 
 ```ts
+import { randomBytes } from "node:crypto";
 import {
     closeSync,
     constants,
@@ -2732,16 +2735,17 @@ import {
     mkdirSync,
     openSync,
     readdirSync,
+    renameSync,
     rmdirSync,
     rmSync,
     writeFileSync,
 } from "node:fs";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { type BundleFile, encodeFile, type FileMode, fileBytes, readExactly } from "./bundle.ts";
 import { errorCode, lstatOrNull } from "./util.ts";
 
 const READ = constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK;
-const WRITE = constants.O_WRONLY | constants.O_CREAT | constants.O_TRUNC | constants.O_NOFOLLOW;
+const WRITE = constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW;
 
 function byName(a: Dirent, b: Dirent): number {
     if (a.name < b.name) return -1;
@@ -2813,14 +2817,22 @@ export function writeTreeFile(root: string, file: BundleFile): void {
         mkdirSync(dir, { mode: 0o755 });
     }
     const target = join(root, file.path);
-    const existing = lstatOrNull(target);
-    if (existing && !existing.isFile()) rmSync(target, { recursive: true, force: true });
-    const fd = openSync(target, WRITE, file.mode);
+    if (lstatOrNull(target)?.isDirectory()) rmSync(target, { recursive: true, force: true });
+    // Written aside and renamed over the target (a link is replaced, not
+    // followed), so no reader or crash ever sees a half-written file.
+    const temp = join(dirname(target), `.${basename(target)}.${randomBytes(4).toString("hex")}.tmp`);
     try {
-        writeFileSync(fd, fileBytes(file));
-        fchmodSync(fd, file.mode);
-    } finally {
-        closeSync(fd);
+        const fd = openSync(temp, WRITE, file.mode);
+        try {
+            writeFileSync(fd, fileBytes(file));
+            fchmodSync(fd, file.mode);
+        } finally {
+            closeSync(fd);
+        }
+        renameSync(temp, target);
+    } catch (error) {
+        rmSync(temp, { force: true });
+        throw error;
     }
 }
 
@@ -2858,9 +2870,15 @@ export function emptyDirectory(path: string): void {
 }
 
 /** `skills/<category>/<name>` (or `skills/<name>`) holding path, or null. */
+/**
+ * The directory a restored skill file replaces: `skills/<cat>/<name>` or an
+ * uncategorised `skills/<name>`. A category's own files (`DESCRIPTION.md`)
+ * name none, since the category also holds bundled skills the bundle omits.
+ */
 export function skillDirectory(path: string): string | null {
     const parts = path.split("/");
     if (parts.length < 3) return null;
+    if (parts.length === 3 && parts[2] !== "SKILL.md") return null;
     return parts.slice(0, Math.min(3, parts.length - 1)).join("/");
 }
 ```
@@ -3928,7 +3946,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { type TestContext, test } from "node:test";
-import { type BootstrapDeps, bootstrap } from "./bootstrap.ts";
+import { type BootstrapDeps, bootstrap, writeRestoredFiles } from "./bootstrap.ts";
 import { type Bundle, encodeFile, writeBundle } from "./bundle.ts";
 import { dumpDatabase } from "./dump.ts";
 import type { ContainerPaths } from "./hermes.ts";
@@ -4111,6 +4129,18 @@ test("an unreachable remote without a checkout fails after retrying", async (t) 
     const { deps } = await setup(t);
     deps.env = { ...deps.env, DOROTHY_CONFIG_REPO: "file:///nonexistent/config.git" };
     await assert.rejects(bootstrap(deps), /clone dorothy-config kept failing for 5 s/);
+});
+
+test("restoring a category file keeps the category's bundled skills", (t) => {
+    const home = tempDir(t);
+    writeFiles(home, { "skills/cat/bundled/SKILL.md": "bundled", "skills/cat/mine/old.md": "old" });
+    writeRestoredFiles(home, [
+        encodeFile("skills/cat/DESCRIPTION.md", Buffer.from("cat"), 0o644),
+        encodeFile("skills/cat/mine/SKILL.md", Buffer.from("mine"), 0o644),
+    ]);
+    assert.equal(readFileSync(join(home, "skills/cat/bundled/SKILL.md"), "utf8"), "bundled");
+    assert.equal(readFileSync(join(home, "skills/cat/DESCRIPTION.md"), "utf8"), "cat");
+    assert.equal(existsSync(join(home, "skills/cat/mine/old.md")), false);
 });
 
 test(".env loses provided and allowlist variables; pairing is emptied", async (t) => {
