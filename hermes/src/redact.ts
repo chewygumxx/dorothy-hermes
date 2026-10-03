@@ -12,16 +12,26 @@ export interface DotenvSpan {
 }
 
 // python-dotenv's grammar (dotenv/parser.py), which upstream loads `.env` with.
-const BLANK = /\s+/y;
-const EXPORT = /export[^\S\r\n]+/y;
+// Python's \s is not JavaScript's: it adds \x1c-\x1f and \x85 and lacks
+// \ufeff, so whitespace is spelled out. INLINE is \s without \r and \n.
+const INLINE =
+    "\\t\\v\\f \\x1c-\\x1f\\x85\\xa0\\u1680\\u2000-\\u200a\\u2028\\u2029\\u202f\\u205f\\u3000";
+const SPACE = `\\r\\n${INLINE}`;
+const BLANK = new RegExp(`[${SPACE}]+`, "y");
+const EXPORT = new RegExp(`export[${INLINE}]+`, "y");
 const QUOTED_KEY = /'([^']+)'/y;
-const KEY = /[^=#\s]+/y;
-const GAP = /[^\S\r\n]*/y;
-const EQUALS = /=[^\S\r\n]*/y;
+const KEY = new RegExp(`[^=#${SPACE}]+`, "y");
+const GAP = new RegExp(`[${INLINE}]*`, "y");
+const EQUALS = new RegExp(`=[${INLINE}]*`, "y");
 const SINGLE = /'((?:\\'|[^'])*)'/y;
 const DOUBLE = /"((?:\\"|[^"])*)"/y;
 const UNQUOTED = /[^\r\n]*/y;
-const END = /[^\S\r\n]*(?:#[^\r\n]*)?[^\S\r\n]*(?:\r\n|\n|\r|$)/y;
+const END = new RegExp(
+    `[${INLINE}]*(?:#[^\\r\\n]*)?[${INLINE}]*(?:\\r\\n|\\n|\\r|$)`,
+    "y",
+);
+const COMMENT = new RegExp(`[${SPACE}]+#[^]*`);
+const TRAILING = new RegExp(`[${SPACE}]+$`);
 const REST = /[^\r\n]*(?:\r|\n|\r\n)?/y;
 const ESCAPES: Record<string, string> = {
     "\\": "\\",
@@ -76,8 +86,8 @@ function binding(source: string, start: number): Binding {
                 );
             } else {
                 value = (step(UNQUOTED)?.[0] ?? "")
-                    .replace(/\s+#.*/, "")
-                    .trimEnd();
+                    .replace(COMMENT, "")
+                    .replace(TRAILING, "");
             }
         }
     }
