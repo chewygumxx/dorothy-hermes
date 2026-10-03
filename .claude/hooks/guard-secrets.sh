@@ -49,7 +49,7 @@ Write | Edit | NotebookEdit | Read)
     [ "$tool" = Read ] && exit 0
     case $path in
     */hermes/src/platforms.json | hermes/src/platforms.json)
-        block "generated: rerun scripts/platforms.py inside the pinned image"
+        block "generated: rerun scripts/platforms.ts inside the pinned image"
         ;;
     */smoke/fixtures/memory/sessions/state.sql | smoke/fixtures/memory/sessions/state.sql)
         block "generated: rerun smoke/make-fixture.sh and review the diff"
