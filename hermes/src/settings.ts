@@ -61,14 +61,18 @@ function hasWildcard(value: string | undefined): boolean {
     return (value ?? "").split(/[\s,[\]"']+/).includes("*");
 }
 
+/** A truthy switch that admits everyone, or every bot. */
+const SWITCH = /_ALLOW_ALL_USERS$|_ALLOW_BOTS$/;
+/** open | allowlist | pairing | disabled. */
+const POLICY = /_POLICY$/;
+
 export function checkAllowlists(env: Env, registry: PlatformRegistry): void {
     const platforms = Object.values(registry.platforms);
+    const extra = registry.extraAllowVariables;
     const allowAll = [
         registry.globalAllowAll,
         ...platforms.map((entry) => entry.allowAllUsers),
-        ...registry.extraAllowVariables.filter((name) =>
-            name.endsWith("_ALLOW_ALL_USERS"),
-        ),
+        ...extra.filter((name) => name.endsWith("_ALLOW_ALL_USERS")),
     ];
     for (const name of allowAll) {
         if (name && isSet(env[name])) {
@@ -77,12 +81,11 @@ export function checkAllowlists(env: Env, registry: PlatformRegistry): void {
             );
         }
     }
+    // Every other extra lists who gets in, whatever its suffix.
     const allowlists = [
         registry.globalAllowlist,
         ...platforms.map((entry) => entry.allowedUsers),
-        ...registry.extraAllowVariables.filter((name) =>
-            /_ALLOWED_[A-Z]+$/.test(name),
-        ),
+        ...extra.filter((name) => !SWITCH.test(name) && !POLICY.test(name)),
     ];
     for (const name of allowlists) {
         if (name && hasWildcard(env[name])) {
@@ -91,10 +94,18 @@ export function checkAllowlists(env: Env, registry: PlatformRegistry): void {
             );
         }
     }
-    for (const name of registry.extraAllowVariables) {
+    for (const name of extra) {
         if (name.endsWith("_ALLOW_BOTS") && isSet(env[name])) {
             throw new SettingsError(
                 `${name} admits bots past the allowlist; remove it`,
+            );
+        }
+        if (
+            POLICY.test(name) &&
+            (env[name] ?? "").trim().toLowerCase() === "open"
+        ) {
+            throw new SettingsError(
+                `${name}=open lets anyone talk to Dorothy; remove it`,
             );
         }
     }

@@ -182,6 +182,62 @@ test("the generated registry has the shape settings expect", () => {
     assert.ok(real.extraAllowVariables.length > 0);
 });
 
+test("a DM or group policy of open is refused", () => {
+    const withPolicy: PlatformRegistry = {
+        ...registry,
+        extraAllowVariables: [
+            ...registry.extraAllowVariables,
+            "WHATSAPP_DM_POLICY",
+        ],
+    };
+    assert.throws(
+        () =>
+            hermesSettings(
+                { ...base, WHATSAPP_DM_POLICY: " Open " },
+                withPolicy,
+            ),
+        /WHATSAPP_DM_POLICY/,
+    );
+    for (const value of ["allowlist", "pairing", "disabled"])
+        assert.doesNotThrow(() =>
+            hermesSettings({ ...base, WHATSAPP_DM_POLICY: value }, withPolicy),
+        );
+});
+
+test("a wildcard in any grant list is refused, whatever its suffix", () => {
+    const lists = [
+        "WHATSAPP_ALLOW_FROM",
+        "SIMPLEX_GROUP_ALLOWED",
+        "A2A_TRUSTED_PEERS",
+    ];
+    const withLists: PlatformRegistry = {
+        ...registry,
+        extraAllowVariables: [...registry.extraAllowVariables, ...lists],
+    };
+    for (const name of lists) {
+        assert.throws(
+            () => hermesSettings({ ...base, [name]: "a,*" }, withLists),
+            new RegExp(`${name} contains`),
+        );
+        assert.doesNotThrow(() =>
+            hermesSettings({ ...base, [name]: "a,b" }, withLists),
+        );
+    }
+});
+
+test("the generated registry covers what the sweep judged a grant", () => {
+    const real = loadRegistry();
+    assert.throws(
+        () => hermesSettings({ ...base, YUANBAO_GROUP_POLICY: "open" }, real),
+        /YUANBAO_GROUP_POLICY/,
+    );
+    assert.throws(
+        () => hermesSettings({ ...base, LINE_ALLOWED_GROUPS: "*" }, real),
+        /LINE_ALLOWED_GROUPS contains/,
+    );
+    assert.ok(allowlistNames(real).includes("WHATSAPP_GROUP_ALLOW_FROM"));
+});
+
 test("plugin platforms' allowlists are refused and cleaned too", () => {
     const real = loadRegistry();
     for (const name of [
