@@ -205,6 +205,8 @@ Run inside the image:
 """
 
 import json
+import pathlib
+import re
 import sys
 
 sys.path.insert(0, "/opt/hermes")
@@ -212,6 +214,7 @@ sys.path.insert(0, "/opt/hermes")
 from gateway import authz_mixin  # noqa: E402
 from gateway.config_env import _ENV_ENABLE_CREDENTIALS  # noqa: E402
 from gateway.pairing import _PLATFORM_ALLOWLIST_ENV  # noqa: E402
+from gateway.platform_registry import platform_registry  # noqa: E402
 
 platforms = {}
 for platform, names in _ENV_ENABLE_CREDENTIALS.items():
@@ -229,6 +232,19 @@ extra = (
     | set(authz_mixin._GROUP_USER_ENV.values())
     | set(authz_mixin._GROUP_CHAT_ENV.values())
 )
+
+# Plugin platforms declare their own allowlist and allow-all switches.
+for entry in platform_registry.all_entries():
+    extra |= {entry.allowed_users_env, entry.allow_all_env} - {""}
+
+# Role allowlists (Discord) grant access before the user allowlist is read.
+ROLES = re.compile(r"\b[A-Z][A-Z0-9_]*_ALLOWED_ROLES\b")
+for root in ("gateway", "plugins"):
+    for source in pathlib.Path("/opt/hermes", root).rglob("*.py"):
+        extra |= set(ROLES.findall(source.read_text(errors="replace")))
+
+for entry in platforms.values():
+    extra -= {entry["allowedUsers"], entry["allowAllUsers"]}
 
 json.dump(
     {
@@ -251,12 +267,17 @@ mkdir -p hermes/src
 docker run --rm --entrypoint /opt/hermes/.venv/bin/python \
   -e HERMES_HOME=/tmp/probe -v "$PWD/scripts:/s:ro" "$IMAGE" /s/platforms.py \
   > hermes/src/platforms.json
+bunx biome format --write hermes/src/platforms.json
 jq '.platforms.telegram, .globalAllowAll, (.extraAllowVariables | length)' hermes/src/platforms.json
+jq '.extraAllowVariables | map(select(test("_ROLES$|_ALLOW_ALL_USERS$")))' hermes/src/platforms.json
 ```
 
-Expected: telegram shows `enabledBy: ["TELEGRAM_BOT_TOKEN"]`,
+The `biome format` keeps the pre-commit hook from rejecting the generated
+file. Expected: telegram shows `enabledBy: ["TELEGRAM_BOT_TOKEN"]`,
 `allowedUsers: "TELEGRAM_ALLOWED_USERS"`; then `"GATEWAY_ALLOW_ALL_USERS"`; then
-a positive count. An import error means upstream moved a name: find it with
+a positive count; then a list including `DISCORD_ALLOWED_ROLES` (when Discord
+ships in the image) and any plugin platform's allow-all switch. An import
+error means upstream moved a name: find it with
 `docker run --rm --entrypoint grep "$IMAGE" -rn _PLATFORM_ALLOWLIST_ENV /opt/hermes/gateway`
 and adjust the script.
 
@@ -292,8 +313,14 @@ You are a smoke-test fixture. Version 1.
 
 - [ ] **Step 7: Boot the gateway hardened, with no credentials**
 
+Seed the volume with the smoke config first, so the probe boots the config
+the smoke test uses rather than upstream's default:
+
 ```bash
 docker volume create probe-data
+docker run --rm -v probe-data:/opt/data \
+  -v "$PWD/smoke/fixtures/config:/probe:ro" --entrypoint /bin/sh "$IMAGE" \
+  -c 'cp /probe/config.yaml /opt/data/config.yaml && chown 10000:10000 /opt/data /opt/data/config.yaml'
 docker run -d --name probe-gw \
   --security-opt no-new-privileges:true --cap-drop ALL \
   --cap-add CHOWN --cap-add DAC_OVERRIDE --cap-add FOWNER \
@@ -301,18 +328,20 @@ docker run -d --name probe-gw \
   --tmpfs /run:exec --pids-limit 512 --memory 4g \
   -e S6_BEHAVIOUR_IF_STAGE2_FAILS=2 \
   -v probe-data:/opt/data \
-  -v "$PWD/smoke/fixtures/config/config.yaml:/probe/config.yaml:ro" \
   "$IMAGE" gateway run
 sleep 90
 docker exec probe-gw /command/s6-svstat -o up,pid /run/service/gateway-default
-docker exec probe-gw sh -c 'grep -i " 21C2 " /proc/net/tcp /proc/net/tcp6'
+docker exec probe-gw sh -c 'grep -iE ":21C2 [0-9A-F]+:0000 0A" /proc/net/tcp /proc/net/tcp6'
+docker exec probe-gw ls -l /opt/data/state.db
 docker logs probe-gw 2>&1 | grep -iE 'operation not permitted|permission denied|EPERM' || echo "no permission errors"
 ```
 
-Expected: `true <pid>`; the 8642 (`21C2`) listener's local address is
-`0100007F` (127.0.0.1), closing the S9 open item; no permission errors.
-Record all three. If the slot is not up, record the logs and stop: the smoke
-test assumes a credential-free gateway stays up.
+Expected: `true <pid>`; one listening (`0A`) line whose local address (the
+column before `:21C2`) is `0100007F` (127.0.0.1), closing the S9 open item;
+`state.db` exists although no conversation has happened (the seed deploy's
+first snapshot depends on it: if absent, record it and stop); no permission
+errors. Record all four. If the slot is not up, record the logs and stop: the
+smoke test assumes a credential-free gateway stays up.
 
 - [ ] **Step 8: Narrow `cap_add`**
 
@@ -335,11 +364,18 @@ for i in $(seq 1 60); do docker exec probe-gw /command/s6-svstat -o up,pid /run/
 echo "elapsed $(( $(date +%s) - start ))"
 ```
 
-Record how long the pid takes to change and come up. If it exceeds 25 s, stop
-and report: the 30 s window in the spec needs widening.
+Record how long the old pid takes to go and how long the new one takes to come
+up after that. If coming up exceeds 25 s, stop and report: the 30 s window in
+the spec needs widening. Also record the drain budget the old process may
+spend before exiting (Task 11 waits for it before starting the 30 s window):
+
+```bash
+docker exec probe-gw grep -rn "cron_drain_timeout" /opt/hermes/gateway /opt/hermes/hermes_cli | head
+```
 
 Then try candidate broken configs in order. For each, write it over
-`/opt/data/config.yaml`, restart, and watch `s6-svstat` for 40 s:
+`/opt/data/config.yaml`, restart, and log `s6-svstat` once a second for 40 s,
+noting the time from the new pid being up to its exit:
 
 ```bash
 docker exec -i -u hermes probe-gw sh -c 'cat > /opt/data/config.yaml' < candidate.yaml
@@ -379,9 +415,11 @@ Candidate C (unparseable YAML):
 platforms: [unclosed
 ```
 
-The first candidate that leaves the slot down (`false`) or changes its pid
-within 40 s becomes `smoke/fixtures/config-broken.yaml`. Record which one and
-the exit code from `docker logs`. If none qualifies, stop and report.
+The first candidate whose new pid exits within 6 s of coming up (or that never
+comes up) becomes `smoke/fixtures/config-broken.yaml`: the gateway test only
+watches 10 s past "up", so a candidate failing later would pass it and become
+last-good. Record which one, its up-to-exit time and the exit code from
+`docker logs`. If none qualifies, stop and report.
 
 - [ ] **Step 10: Check the CJK tokenizer and the search entry point**
 
@@ -399,7 +437,17 @@ docker exec -u hermes probe-gw /opt/hermes/.venv/bin/python /tmp/probe-search.py
 
 Expected: a path or none for the tokenizer (record which: when absent, CJK
 search uses the trigram index and boot step 3.4 only compacts); the search
-prints `0` without an import error. Then remove the probe:
+prints `0` without an import error.
+
+Then run the command boot step 3.4 relies on and record its exact output for
+both outcomes it can report, so bootstrap can tell "done" from "skipped":
+
+```bash
+docker exec -u hermes probe-gw /opt/hermes/bin/hermes sessions optimize-storage --yes; echo "exit $?"
+docker exec probe-gw grep -rn "Not enough free disk\|nothing to do" /opt/hermes/hermes_cli | head
+```
+
+Then remove the probe:
 `docker rm -f probe-gw; docker volume rm probe-data`.
 
 - [ ] **Step 11: Record the probe**
@@ -412,9 +460,11 @@ timings).
 
 - [ ] **Step 12: Lint and commit**
 
+The lint scripts list files with `git ls-files`, so stage first:
+
 ```bash
-bun run lint:md && bun run lint:emdash
 git add scripts/platforms.py hermes/src/platforms.json smoke/fixtures docs/notes/2026-10-03-upstream-probe.md
+bun run lint:md && bun run lint:emdash
 git commit -m "docs: Record the upstream image probe"
 ```
 
