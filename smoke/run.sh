@@ -91,6 +91,12 @@ host_node=$(node --version)
 image_node=$(docker run --rm --entrypoint /usr/local/bin/node "$image" --version)
 [ "$host_node" = "$image_node" ] || fail "mise's Node $host_node differs from the image's $image_node"
 
+say "S6: platforms.json matches the pinned image"
+docker run --rm --entrypoint /usr/local/bin/node \
+    -v "$root/scripts:/s:ro" -v "$root/hermes/src/platforms.json:/platforms.json:ro" \
+    "$image" /s/platforms.ts --check /platforms.json ||
+    fail "hermes/src/platforms.json no longer matches upstream; regenerate it with scripts/platforms.ts"
+
 say "S9: no service publishes ports"
 compose config --format json | jq -e '[.services[] | select(.ports)] | length == 0' >/dev/null ||
     fail "a service publishes ports"
