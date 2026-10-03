@@ -6,14 +6,13 @@
         "sessionUrl": false
     },
     "enabledPlugins": {
-        "claude-code-setup@claude-plugins-official": true,
         "claude-md-management@claude-plugins-official": true,
         "code-review@claude-plugins-official": true,
         "code-simplifier@claude-plugins-official": true,
         "explanatory-output-style@claude-plugins-official": true,
-        "plugin-dev@claude-plugins-official": true,
         "remember@claude-plugins-official": true,
         "superpowers@claude-plugins-official": true,
+        "typescript-lsp@claude-plugins-official": true,
         "prohibit-em-dash@chewygumxx": true,
         "repo-memory@chewygumxx": true,
         "bun-install@chewygumxx": true,
