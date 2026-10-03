@@ -1284,7 +1284,11 @@ const registry: PlatformRegistry = {
     },
     globalAllowlist: "GATEWAY_ALLOWED_USERS",
     globalAllowAll: "GATEWAY_ALLOW_ALL_USERS",
-    extraAllowVariables: ["TELEGRAM_ALLOW_BOTS", "TELEGRAM_GROUP_ALLOWED_USERS"],
+    extraAllowVariables: [
+        "PLUGIN_ALLOW_ALL_USERS",
+        "TELEGRAM_ALLOW_BOTS",
+        "TELEGRAM_GROUP_ALLOWED_USERS",
+    ],
 };
 
 const base = {
@@ -1342,16 +1346,36 @@ test("a platform token without its allowlist is refused", () => {
 });
 
 test("allow-all and allow-bots overrides are refused", () => {
-    for (const name of ["GATEWAY_ALLOW_ALL_USERS", "TELEGRAM_ALLOW_ALL_USERS", "TELEGRAM_ALLOW_BOTS"]) {
+    for (const name of [
+        "GATEWAY_ALLOW_ALL_USERS",
+        "TELEGRAM_ALLOW_ALL_USERS",
+        "PLUGIN_ALLOW_ALL_USERS",
+        "TELEGRAM_ALLOW_BOTS",
+    ]) {
         assert.throws(() => hermesSettings({ ...base, [name]: "true" }, registry), new RegExp(name));
     }
     assert.doesNotThrow(() => hermesSettings({ ...base, GATEWAY_ALLOW_ALL_USERS: "false" }, registry));
+});
+
+test("a wildcard entry in any allowlist is refused", () => {
+    for (const [name, value] of [
+        ["TELEGRAM_ALLOWED_USERS", "42,*"],
+        ["GATEWAY_ALLOWED_USERS", " * "],
+        ["TELEGRAM_GROUP_ALLOWED_USERS", '["*"]'],
+    ] as const) {
+        assert.throws(
+            () => hermesSettings({ ...base, [name]: value }, registry),
+            new RegExp(`${name} contains "\\*"`),
+        );
+    }
+    assert.doesNotThrow(() => hermesSettings({ ...base, TELEGRAM_ALLOWED_USERS: "42,43" }, registry));
 });
 
 test("allowlistNames lists every allowlist and override once", () => {
     assert.deepEqual(allowlistNames(registry), [
         "GATEWAY_ALLOWED_USERS",
         "GATEWAY_ALLOW_ALL_USERS",
+        "PLUGIN_ALLOW_ALL_USERS",
         "TELEGRAM_ALLOWED_USERS",
         "TELEGRAM_ALLOW_ALL_USERS",
         "TELEGRAM_ALLOW_BOTS",
@@ -1434,14 +1458,31 @@ export function allowlistNames(registry: PlatformRegistry): string[] {
     return [...names].sort();
 }
 
+/** Upstream reads a `*` entry in any allowlist as "everyone". */
+function hasWildcard(value: string | undefined): boolean {
+    return (value ?? "").split(/[\s,[\]"']+/).includes("*");
+}
+
 export function checkAllowlists(env: Env, registry: PlatformRegistry): void {
+    const platforms = Object.values(registry.platforms);
     const allowAll = [
         registry.globalAllowAll,
-        ...Object.values(registry.platforms).map((entry) => entry.allowAllUsers),
+        ...platforms.map((entry) => entry.allowAllUsers),
+        ...registry.extraAllowVariables.filter((name) => name.endsWith("_ALLOW_ALL_USERS")),
     ];
     for (const name of allowAll) {
         if (name && isSet(env[name])) {
             throw new SettingsError(`${name} lets anyone talk to Dorothy; remove it`);
+        }
+    }
+    const allowlists = [
+        registry.globalAllowlist,
+        ...platforms.map((entry) => entry.allowedUsers),
+        ...registry.extraAllowVariables.filter((name) => /_ALLOWED_[A-Z]+$/.test(name)),
+    ];
+    for (const name of allowlists) {
+        if (name && hasWildcard(env[name])) {
+            throw new SettingsError(`${name} contains "*", which lets anyone in; remove it`);
         }
     }
     for (const name of registry.extraAllowVariables) {
@@ -1542,7 +1583,7 @@ export function sidecarSettings(env: Env): SidecarSettings {
 - [ ] **Step 4: Run the tests**
 
 Run: `mise exec -- node --test hermes/src/settings.test.ts`
-Expected: 9 pass.
+Expected: 10 pass.
 
 - [ ] **Step 5: Commit**
 
