@@ -13,11 +13,5 @@ import { defineConfig } from "@chewygumxx/commitlint-config";
 // Types, limits and the prompt are shared; only the scopes are this
 // repository's own.
 export default defineConfig({
-    scopes: [
-        {
-            name: "claude",
-            fullName: "Claude",
-            description: "Claude Code assets ie. hooks, skills, agents, etc.",
-        },
-    ],
+    scopes: [],
 });
