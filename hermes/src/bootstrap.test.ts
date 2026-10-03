@@ -1,5 +1,11 @@
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, renameSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    renameSync,
+    writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { type TestContext, test } from "node:test";
@@ -336,6 +342,45 @@ test(".env loses provided and allowlist variables; pairing is emptied", async (t
         existsSync(join(paths.home, "platforms/pairing/telegram.json")),
         false,
     );
+});
+
+test("an .env disguised with control characters or NULs still loses its allowlists", async (t) => {
+    const { paths, deps } = await setup(t);
+    writeFiles(paths.home, {
+        ".env": [
+            "API_SERVER_KEY=keep-me-123",
+            // Python's \s, which python-dotenv uses, includes \x1c-\x1f and \x85.
+            "GATEWAY_ALLOW_ALL_USERS\x1f=true",
+            "TELEGRAM_ALLOWED_USERS\x85=*",
+            // Upstream strips NULs before parsing.
+            "GATEWAY_ALLOWED_USERS\x00=*\r",
+            "OTHER=1\r\n",
+        ].join("\n"),
+    });
+    await bootstrap(deps);
+    assert.equal(
+        readFileSync(join(paths.home, ".env"), "utf8"),
+        "API_SERVER_KEY=keep-me-123\nOTHER=1\n",
+    );
+});
+
+test("a UTF-16 .env is cleaned as upstream decodes it; UTF-32 is set aside", async (t) => {
+    const { paths, deps } = await setup(t);
+    const env = join(paths.home, ".env");
+    const text = "API_SERVER_KEY=keep-me-123\nGATEWAY_ALLOW_ALL_USERS=true\n";
+    writeFileSync(
+        env,
+        Buffer.concat([
+            Buffer.from([0xff, 0xfe]),
+            Buffer.from(text, "utf16le"),
+        ]),
+    );
+    await bootstrap(deps);
+    assert.equal(readFileSync(env, "utf8"), "API_SERVER_KEY=keep-me-123\n");
+    writeFileSync(env, Buffer.from([0xff, 0xfe, 0, 0, 0x47, 0, 0, 0]));
+    await bootstrap(deps);
+    assert.equal(existsSync(env), false);
+    assert.equal(existsSync(`${env}.refused`), true);
 });
 
 test("a config repository without config.yaml is named", async (t) => {

@@ -1,4 +1,4 @@
-import { existsSync, renameSync, rmSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import {
     type Bundle,
@@ -47,6 +47,7 @@ import {
 } from "./status.ts";
 import {
     type Clock,
+    errorCode,
     errorMessage,
     iso,
     type Log,
@@ -72,18 +73,58 @@ export interface BootstrapDeps extends Clock {
  * Entries are read with upstream's grammar and dropped whole, multi-line
  * values included; a line upstream cannot parse is dropped too.
  */
+/** Control characters and undecodable bytes; no `.env` line upstream writes has them. */
+// biome-ignore lint/suspicious/noControlCharactersInRegex: finding them is the point.
+const CONTROL = /[\x00-\x08\x0b\x0c\x0e-\x1f\x7f-\x9f\ufffd]/;
+
+/**
+ * `.env` text as upstream's sanitizer and loader see it: UTF-16 decoded by
+ * its BOM, otherwise UTF-8 without a BOM; NULs stripped; universal
+ * newlines. Null for UTF-32, which upstream leaves for a fallback decode.
+ */
+function decodeDotenv(raw: Buffer): string | null {
+    const bom = (...bytes: number[]) =>
+        raw.subarray(0, bytes.length).equals(Buffer.from(bytes));
+    if (bom(0xff, 0xfe, 0, 0) || bom(0, 0, 0xfe, 0xff)) return null;
+    let text: string;
+    if (bom(0xff, 0xfe)) text = raw.subarray(2).toString("utf16le");
+    else if (bom(0xfe, 0xff))
+        text = Buffer.from(raw.subarray(2)).swap16().toString("utf16le");
+    else text = new TextDecoder().decode(raw);
+    return text.replaceAll("\0", "").replace(/\r\n?/g, "\n");
+}
+
+/**
+ * Removes what the deployment provides and every allowlist (S6), and
+ * rewrites the file as plain UTF-8 so upstream reads exactly what was
+ * cleaned. A file that cannot be decoded that way is set aside.
+ */
 export function cleanDotenv(
     path: string,
     env: Env,
     allowlists: string[],
 ): string[] {
-    const text = readText(path);
-    if (text === "") return [];
+    let raw: Buffer;
+    try {
+        raw = readFileSync(path);
+    } catch (error) {
+        if (errorCode(error) === "ENOENT") return [];
+        throw error;
+    }
+    const text = decodeDotenv(raw);
+    if (text === null) {
+        renameSync(path, `${path}.refused`);
+        return ["the whole file (UTF-32), moved to .env.refused"];
+    }
     const drop = new Set(allowlists);
     const removed: string[] = [];
     const kept = dotenvSpans(text).filter((span) => {
         if (span.invalid) {
             removed.push("an unparsable line");
+            return false;
+        }
+        if (CONTROL.test(span.text)) {
+            removed.push("a line with control characters");
             return false;
         }
         const name = span.name;
@@ -95,9 +136,8 @@ export function cleanDotenv(
         removed.push(name);
         return false;
     });
-    if (removed.length > 0) {
-        writeFileAtomic(path, kept.map((span) => span.text).join(""), 0o600);
-    }
+    const clean = kept.map((span) => span.text).join("");
+    if (!Buffer.from(clean).equals(raw)) writeFileAtomic(path, clean, 0o600);
     return removed;
 }
 
