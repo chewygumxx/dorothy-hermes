@@ -1,3 +1,13 @@
+// vim:set expandtab shiftwidth=4 filetype=typescript:
+// SPDX-License-Identifier: GPL-3.0-only
+
+//
+//
+// ~chewygumxx/dorothy-hermes.git
+// ::: :/hermes/src/redact.ts
+//
+//
+
 /** Variable names whose values are treated as secrets (S5). */
 export const SECRET_NAME = /_(TOKEN|KEY|SECRET|PASSWORD)$/;
 export const MIN_SECRET_LENGTH = 8;

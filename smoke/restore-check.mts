@@ -1,3 +1,13 @@
+// vim:set expandtab shiftwidth=4 filetype=typescript:
+// SPDX-License-Identifier: GPL-3.0-only
+
+//
+//
+// ~chewygumxx/dorothy-hermes.git
+// ::: :/smoke/restore-check.mts
+//
+//
+
 // Restores a published state.sql and checks that each needle survived.
 import { mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";

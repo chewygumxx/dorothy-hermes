@@ -1,4 +1,13 @@
+# vim:set expandtab shiftwidth=4 filetype=python:
 # SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/scripts/platforms.py
+#
+#
+
 """Print the pinned image's platform allowlist registry as JSON (S6).
 
 Run inside the image:

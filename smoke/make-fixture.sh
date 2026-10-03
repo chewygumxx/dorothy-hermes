@@ -2,6 +2,13 @@
 # vim:set expandtab shiftwidth=4 filetype=sh:
 # SPDX-License-Identifier: GPL-3.0-only
 
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/smoke/make-fixture.sh
+#
+#
+
 # Regenerates smoke/fixtures/memory/sessions/state.sql with an OLDER image,
 # so every smoke run proves migration from an earlier schema. Run it only
 # deliberately (after an upgrade lands), review the diff, then commit.

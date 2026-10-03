@@ -1,3 +1,13 @@
+// vim:set expandtab shiftwidth=4 filetype=typescript:
+// SPDX-License-Identifier: GPL-3.0-only
+
+//
+//
+// ~chewygumxx/dorothy-hermes.git
+// ::: :/hermes/src/config.ts
+//
+//
+
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { Git } from "./git.ts";

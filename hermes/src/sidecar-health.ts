@@ -1,3 +1,13 @@
+// vim:set expandtab shiftwidth=4 filetype=typescript:
+// SPDX-License-Identifier: GPL-3.0-only
+
+//
+//
+// ~chewygumxx/dorothy-hermes.git
+// ::: :/hermes/src/sidecar-health.ts
+//
+//
+
 import { syncInterval } from "./settings.ts";
 import { sidecarPaths } from "./sidecar.ts";
 import { readJson, type SyncStatus } from "./status.ts";

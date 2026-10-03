@@ -1,6 +1,15 @@
 #!/command/with-contenv sh
-# shellcheck shell=sh
+# vim:set expandtab shiftwidth=4 filetype=sh:
 # SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/hermes/cont-init.d/005-dorothy-bootstrap
+#
+#
+
+# shellcheck shell=sh
 # Sorts before upstream's 01-hermes-setup, so it finds our SOUL.md and
 # config.yaml in place. A failure stops the container
 # (S6_BEHAVIOUR_IF_STAGE2_FAILS=2). Absolute paths: upstream puts the

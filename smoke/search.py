@@ -1,4 +1,13 @@
+# vim:set expandtab shiftwidth=4 filetype=python:
 # SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/smoke/search.py
+#
+#
+
 """Exit 1 unless Hermes's session search finds every argument."""
 
 import sys

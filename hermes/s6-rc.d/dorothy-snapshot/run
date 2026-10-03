@@ -1,6 +1,15 @@
 #!/command/with-contenv sh
-# shellcheck shell=sh
+# vim:set expandtab shiftwidth=4 filetype=sh:
 # SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/hermes/s6-rc.d/dorothy-snapshot/run
+#
+#
+
+# shellcheck shell=sh
 # Boot check, then a snapshot every DOROTHY_SYNC_INTERVAL seconds.
 export HOME=/opt/data
 exec /command/s6-setuidgid hermes /usr/local/bin/node /opt/dorothy/src/snapshot.ts

@@ -2,6 +2,13 @@
 # vim:set expandtab shiftwidth=4 filetype=sh:
 # SPDX-License-Identifier: GPL-3.0-only
 
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/smoke/run.sh
+#
+#
+
 # Boots the stack against fixture repositories and runs the deployment and
 # security designs' smoke steps. Needs Docker, jq and mise's Node.
 # KEEP=1 keeps the work directory and its compose.log.

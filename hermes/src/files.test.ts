@@ -1,3 +1,13 @@
+// vim:set expandtab shiftwidth=4 filetype=typescript:
+// SPDX-License-Identifier: GPL-3.0-only
+
+//
+//
+// ~chewygumxx/dorothy-hermes.git
+// ::: :/hermes/src/files.test.ts
+//
+//
+
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import {

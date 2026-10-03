@@ -1,3 +1,13 @@
+// vim:set expandtab shiftwidth=4 filetype=typescript:
+// SPDX-License-Identifier: GPL-3.0-only
+
+//
+//
+// ~chewygumxx/dorothy-hermes.git
+// ::: :/smoke/dump-fixture.mts
+//
+//
+
 // Runs inside an older image: dumps the newest *-fixture snapshot's state.db.
 import { readdirSync } from "node:fs";
 import { join } from "node:path";

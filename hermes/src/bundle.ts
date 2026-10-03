@@ -1,3 +1,13 @@
+// vim:set expandtab shiftwidth=4 filetype=typescript:
+// SPDX-License-Identifier: GPL-3.0-only
+
+//
+//
+// ~chewygumxx/dorothy-hermes.git
+// ::: :/hermes/src/bundle.ts
+//
+//
+
 import { isUtf8 } from "node:buffer";
 import { createHash } from "node:crypto";
 import {
