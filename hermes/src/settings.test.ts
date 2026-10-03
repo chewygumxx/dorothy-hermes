@@ -104,6 +104,10 @@ test("repository names derive from GitHub URLs", () => {
         repoName("git@github.com:me/dorothy.config.git"),
         "me/dorothy.config",
     );
+    assert.equal(
+        repoName("ssh://git@ssh.github.com:443/me/dorothy-config.git"),
+        "me/dorothy-config",
+    );
     assert.equal(repoName("file:///tmp/x.git"), null);
 });
 

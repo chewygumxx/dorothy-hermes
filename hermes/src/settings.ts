@@ -173,8 +173,9 @@ function wholeNumber(
 
 export function repoName(url: string): string | null {
     return (
-        /github\.com[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(url)?.[1] ??
-        null
+        /github\.com(?::\d+)?[:/]([\w.-]+\/[\w.-]+?)(?:\.git)?\/?$/.exec(
+            url,
+        )?.[1] ?? null
     );
 }
 
