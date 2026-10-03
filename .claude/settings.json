@@ -11,34 +11,22 @@
         "code-review@claude-plugins-official": true,
         "code-simplifier@claude-plugins-official": true,
         "explanatory-output-style@claude-plugins-official": true,
+        "plugin-dev@claude-plugins-official": true,
         "remember@claude-plugins-official": true,
-        "superpowers@claude-plugins-official": true
+        "superpowers@claude-plugins-official": true,
+        "prohibit-em-dash@chewygumxx": true,
+        "repo-memory@chewygumxx": true,
+        "bun-install@chewygumxx": true,
+        "repo-metadata@chewygumxx": true,
+        "shell-lint@chewygumxx": true
     },
-    "hooks": {
-        "SessionStart": [
-            {
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/install-deps.sh\"",
-                        "statusMessage": "Installing dependencies",
-                        "timeout": 120
-                    }
-                ]
+    "extraKnownMarketplaces": {
+        "chewygumxx": {
+            "autoUpdate": true,
+            "source": {
+                "source": "github",
+                "repo": "chewygumxx/claude-library"
             }
-        ],
-        "PostToolUse": [
-            {
-                "matcher": "Write|Edit",
-                "hooks": [
-                    {
-                        "type": "command",
-                        "command": "sh \"${CLAUDE_PROJECT_DIR}/.claude/hooks/prohibit-em-dash.sh\"",
-                        "statusMessage": "Checking for em dashes",
-                        "timeout": 10
-                    }
-                ]
-            }
-        ]
+        }
     }
 }
