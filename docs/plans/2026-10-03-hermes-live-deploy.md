@@ -878,7 +878,14 @@ test("missing files read as null and empty text", (t) => {
 
 ```ts
 import assert from "node:assert/strict";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import {
+    existsSync,
+    mkdirSync,
+    readFileSync,
+    rmSync,
+    utimesSync,
+    writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { test } from "node:test";
 import { LockTimeout, tryWithLock, withLock } from "./lock.ts";
@@ -899,6 +906,37 @@ test("a dead owner's lock is taken over", async (t) => {
     );
     assert.equal(owner, String(process.pid));
     assert.equal(existsSync(path), false);
+});
+
+test("a takeover leaves a lock that changed owner meanwhile", async (t) => {
+    const path = join(tempDir(t), "snapshot.lock");
+    heldBy(path, 999_999);
+    const result = await tryWithLock(path, async () => "ran", {
+        isAlive: (pid) => {
+            if (pid !== 999_999) return true;
+            // Another waiter takes the dead lock over between our read and our takeover.
+            rmSync(path, { recursive: true });
+            heldBy(path, 4242);
+            return false;
+        },
+    });
+    assert.deepEqual(result, { ran: false });
+    assert.equal(readFileSync(join(path, "pid"), "utf8"), "4242");
+    assert.equal(existsSync(`${path}.takeover`), false);
+});
+
+test("a crashed takeover's guard expires", async (t) => {
+    const path = join(tempDir(t), "snapshot.lock");
+    heldBy(path, 999_999);
+    mkdirSync(`${path}.takeover`);
+    const old = new Date(Date.now() - 120_000);
+    utimesSync(`${path}.takeover`, old, old);
+    const ran = await withLock(path, async () => "ran", {
+        isAlive: () => false,
+        waitMs: 1_000,
+        pollMs: 10,
+    });
+    assert.equal(ran, "ran");
 });
 
 test("waits are bounded", async (t) => {
@@ -942,7 +980,10 @@ Expected: FAIL, modules not found.
 ```ts
 import { randomBytes } from "node:crypto";
 import {
+    closeSync,
+    fsyncSync,
     mkdirSync,
+    openSync,
     readFileSync,
     renameSync,
     rmSync,
@@ -951,7 +992,20 @@ import {
 import { dirname } from "node:path";
 import { errorCode } from "./util.ts";
 
-/** Writes through a temporary file in the same directory, then renames. */
+function fsyncPath(path: string, flags: string): void {
+    const fd = openSync(path, flags);
+    try {
+        fsyncSync(fd);
+    } finally {
+        closeSync(fd);
+    }
+}
+
+/**
+ * Writes through a temporary file in the same directory, then renames. Both
+ * the file and the directory are synced, so a host crash leaves the old
+ * content or the new, never an empty file.
+ */
 export function writeFileAtomic(
     path: string,
     data: string | Uint8Array,
@@ -960,12 +1014,19 @@ export function writeFileAtomic(
     mkdirSync(dirname(path), { recursive: true });
     const temp = `${path}.${process.pid}.${randomBytes(4).toString("hex")}.tmp`;
     try {
-        writeFileSync(temp, data, { mode, flag: "wx" });
+        const fd = openSync(temp, "wx", mode);
+        try {
+            writeFileSync(fd, data);
+            fsyncSync(fd);
+        } finally {
+            closeSync(fd);
+        }
         renameSync(temp, path);
     } catch (error) {
         rmSync(temp, { force: true });
         throw error;
     }
+    fsyncPath(dirname(path), "r");
 }
 
 export function writeJson(path: string, value: unknown, mode = 0o644): void {
@@ -1021,14 +1082,17 @@ export interface SyncStatus {
 
 ```ts
 import {
+    mkdirSync,
     mkdtempSync,
     readFileSync,
     renameSync,
     rmSync,
+    statSync,
     writeFileSync,
 } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { errorCode } from "./util.ts";
 
 export class LockTimeout extends Error {}
 
@@ -1058,13 +1122,14 @@ function owner(path: string): number | null {
     }
 }
 
+/** A takeover guard is held for a few system calls; older means its holder died. */
+const GUARD_STALE_MS = 60_000;
+
 /**
- * One attempt. The lock directory is built aside with its pid file, then
- * renamed into place, so a lock never exists without its owner recorded.
+ * The lock directory is built aside with its pid file, then renamed into
+ * place, so a lock never exists without its owner recorded.
  */
-function tryAcquire(path: string, options: LockOptions): boolean {
-    const pid = options.pid ?? process.pid;
-    const isAlive = options.isAlive ?? pidAlive;
+function place(path: string, pid: number): boolean {
     const temp = mkdtempSync(join(dirname(path), `.${basename(path)}-`));
     writeFileSync(join(temp, "pid"), String(pid));
     try {
@@ -1072,28 +1137,46 @@ function tryAcquire(path: string, options: LockOptions): boolean {
         return true;
     } catch (error) {
         rmSync(temp, { recursive: true, force: true });
-        const code = (error as NodeJS.ErrnoException).code;
+        const code = errorCode(error);
         if (code !== "ENOTEMPTY" && code !== "EEXIST") throw error;
-    }
-    const held = owner(path);
-    if (held !== null && isAlive(held)) return false;
-    // A dead owner: move its lock aside atomically, so one waiter wins.
-    const stale = `${path}.stale-${pid}`;
-    try {
-        renameSync(path, stale);
-    } catch {
         return false;
     }
-    const moved = owner(stale);
-    if (moved !== held && moved !== null && isAlive(moved)) {
-        // Another waiter took the lock between our read and our rename.
+}
+
+/**
+ * Removes a dead owner's lock. Takeovers are serialised through a guard
+ * directory, and the owner is read again under it, so a waiter never removes
+ * a lock another waiter has meanwhile taken. Returns whether it held the guard.
+ */
+function takeOver(path: string, dead: number | null): boolean {
+    const guard = `${path}.takeover`;
+    try {
+        mkdirSync(guard);
+    } catch (error) {
+        if (errorCode(error) !== "EEXIST") throw error;
         try {
-            renameSync(stale, path);
+            if (Date.now() - statSync(guard).mtimeMs > GUARD_STALE_MS) {
+                rmSync(guard, { recursive: true, force: true });
+            }
         } catch {}
         return false;
     }
-    rmSync(stale, { recursive: true, force: true });
-    return tryAcquire(path, options);
+    try {
+        if (owner(path) === dead) rmSync(path, { recursive: true, force: true });
+    } finally {
+        rmSync(guard, { recursive: true, force: true });
+    }
+    return true;
+}
+
+/** One attempt. */
+function tryAcquire(path: string, options: LockOptions): boolean {
+    const pid = options.pid ?? process.pid;
+    const isAlive = options.isAlive ?? pidAlive;
+    if (place(path, pid)) return true;
+    const held = owner(path);
+    if (held !== null && isAlive(held)) return false;
+    return takeOver(path, held) && place(path, pid);
 }
 
 function release(path: string, pid: number): void {
@@ -1136,7 +1219,7 @@ export async function tryWithLock<T>(
 - [ ] **Step 6: Run the tests**
 
 Run: `mise exec -- node --test hermes/src/status.test.ts hermes/src/lock.test.ts`
-Expected: 7 pass.
+Expected: 9 pass.
 
 - [ ] **Step 7: Commit**
 
