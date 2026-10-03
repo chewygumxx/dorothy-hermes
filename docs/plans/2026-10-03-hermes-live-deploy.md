@@ -4704,7 +4704,7 @@ test("the fallback apply delivers a missed config push", async (t) => {
     assert.equal(readFileSync(join(paths.home, "SOUL.md"), "utf8"), "soul 2");
 });
 
-test("--final retries the backup for 30 seconds", async (t) => {
+test("--final retries the backup within its budget", async (t) => {
     const { hermes, deps } = await setup(t, (home) => fakeHermes({ snapshot: snapshotter(home, { failures: 2 }) }));
     assert.equal(await snapshotOnce(deps, { final: true }), true);
     assert.equal(hermes.calls.filter((c) => c.startsWith("snapshot")).length, 3);
@@ -4806,10 +4806,17 @@ async function fallbackApply(deps: SnapshotDeps): Promise<void> {
     if (!result.ran) deps.log("an apply is running; skipping the config check");
 }
 
-async function takeBackup(deps: SnapshotDeps, final: boolean): Promise<string> {
-    if (!final) return deps.hermes.snapshot(SNAPSHOT_LABEL);
+/**
+ * The final snapshot shares one budget for the lock wait and backup retries,
+ * leaving the rest of S6_KILL_FINISH_MAXTIME (60 s) for the dump and bundle.
+ */
+export const FINAL_BUDGET_MS = 40_000;
+
+async function takeBackup(deps: SnapshotDeps, finalDeadline: number | null): Promise<string> {
+    if (finalDeadline === null) return deps.hermes.snapshot(SNAPSHOT_LABEL);
     // An interrupted snapshot's child may still hold the backup lock.
-    return retry("hermes backup", () => deps.hermes.snapshot(SNAPSHOT_LABEL), { ...deps, forMs: 30_000 });
+    const forMs = Math.max(1_000, finalDeadline - deps.now());
+    return retry("hermes backup", () => deps.hermes.snapshot(SNAPSHOT_LABEL), { ...deps, forMs });
 }
 
 export async function snapshotOnce(deps: SnapshotDeps, options: { final?: boolean } = {}): Promise<boolean> {
@@ -4819,13 +4826,14 @@ export async function snapshotOnce(deps: SnapshotDeps, options: { final?: boolea
         return false;
     }
     const final = options.final === true;
+    const finalDeadline = final ? deps.now() + FINAL_BUDGET_MS : null;
     return withLock(
         join(run, "snapshot.lock"),
         async () => {
             recordStatus(deps, { lastAttemptAt: iso(deps.now()) });
             try {
                 if (!final) await fallbackApply(deps);
-                const dir = await takeBackup(deps, final);
+                const dir = await takeBackup(deps, finalDeadline);
                 const redactor = new Redactor(
                     collectSecrets([...Object.entries(deps.env), ...parseDotenv(readText(join(home, ".env")))]),
                 );
@@ -4867,7 +4875,7 @@ export async function snapshotOnce(deps: SnapshotDeps, options: { final?: boolea
                 throw error;
             }
         },
-        { waitMs: final ? 30_000 : 600_000 },
+        { waitMs: final ? FINAL_BUDGET_MS / 2 : 600_000 },
     );
 }
 
