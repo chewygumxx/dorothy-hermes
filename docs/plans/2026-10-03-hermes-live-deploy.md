@@ -6699,10 +6699,13 @@ Expected: no `EMPTY:` line.
 
 Store `.env.keys` in the password manager. Confirm `.env` holds only
 `encrypted:` values (`grep -v '^#' .env | grep -v 'encrypted:'` prints only
-`DOTENV_PUBLIC_KEY`), then commit:
+`DOTENV_PUBLIC_KEY`). The repository is public, so this publishes the
+ciphertext; S11 accepts that, provided `.env.keys` never leaves the server
+and the password manager. Commit and, with the user's go-ahead, push:
 
 ```bash
 git add .env && git commit -m "chore: Add the encrypted deployment secrets"
+git push
 ```
 
 - [ ] **Step 5: Bring Dorothy up**
@@ -6710,7 +6713,7 @@ git add .env && git commit -m "chore: Add the encrypted deployment secrets"
 On the server:
 
 ```bash
-git clone git@github.com:chewygumxx/dorothy-hermes.git && cd dorothy-hermes
+git clone https://github.com/chewygumxx/dorothy-hermes.git && cd dorothy-hermes
 install -m 0600 /dev/stdin .env.keys    # paste from the password manager, then Ctrl-D
 chmod -R a+rX hermes                     # readable under userns-remap
 mise trust && mise install
