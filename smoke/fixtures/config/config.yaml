@@ -1,0 +1,5 @@
+# Smoke-test config: no messaging platforms; the API server, enabled by the
+# key upstream generates, stands in for one.
+skills:
+    external_dirs:
+        - /opt/data/dorothy/config/skills
