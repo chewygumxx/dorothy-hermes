@@ -120,7 +120,18 @@ say "step 1: a cold boot from the memory fixture"
 compose up -d --wait --wait-timeout 600 || fail "the stack did not become healthy"
 in_hermes test -f /opt/data/memories/MEMORY.md || fail "memories were not restored"
 in_hermes test -f /opt/data/skills/smoke/hello/SKILL.md || fail "skills were not restored"
-compose exec -T -u hermes hermes /opt/hermes/.venv/bin/python /smoke/search.py zebracorn 東京 ||
+# Hermes's own session search is the oracle, so this is upstream's Python
+# run by upstream's interpreter: Node cannot load the CJK tokenizer its index
+# uses (see hermes/src/dump.ts), and the search falls back in ways only it knows.
+compose exec -T -u hermes hermes /opt/hermes/.venv/bin/python - zebracorn 東京 <<'EOF' ||
+import sys
+sys.path.insert(0, "/opt/hermes")
+from hermes_state import SessionDB
+db = SessionDB()
+missing = [query for query in sys.argv[1:] if not db.search_messages(query)]
+print("missing:" if missing else "found:", ", ".join(missing or sys.argv[1:]))
+sys.exit(1 if missing else 0)
+EOF
     fail "session search lost fixture messages"
 
 say "S1: the memory key is absent from hermes"
