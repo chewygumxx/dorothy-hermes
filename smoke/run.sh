@@ -37,8 +37,8 @@ compose() { docker compose -f "$root/compose.yaml" -f "$root/smoke/compose.smoke
 
 ssh-keygen -q -t ed25519 -N '' -C smoke-config -f "$work/config_key"
 ssh-keygen -q -t ed25519 -N '' -C smoke-memory -f "$work/memory_key"
-DOROTHY_CONFIG_DEPLOY_KEY=$(base64 -w0 < "$work/config_key")
-DOROTHY_MEMORY_DEPLOY_KEY=$(base64 -w0 < "$work/memory_key")
+DOROTHY_CONFIG_DEPLOY_KEY=$(base64 -w0 <"$work/config_key")
+DOROTHY_MEMORY_DEPLOY_KEY=$(base64 -w0 <"$work/memory_key")
 export DOROTHY_CONFIG_DEPLOY_KEY DOROTHY_MEMORY_DEPLOY_KEY
 
 image=$(compose config --images | grep hermes-agent | head -n 1)
@@ -46,14 +46,14 @@ GIT='git -c user.name=smoke -c user.email=smoke@example.invalid -c commit.gpgsig
 
 cleanup() {
     code=$?
-    compose logs --no-color --timestamps > "$work/compose.log" 2>&1 || true
-    compose down --volumes --remove-orphans > /dev/null 2>&1 || true
+    compose logs --no-color --timestamps >"$work/compose.log" 2>&1 || true
+    compose down --volumes --remove-orphans >/dev/null 2>&1 || true
     if [ "$code" -ne 0 ]; then tail -n 300 "$work/compose.log" >&2 || true; fi
     if [ -n "${KEEP:-}" ]; then
         say "kept $work"
         return
     fi
-    docker run --rm -v "$work:/work" --entrypoint /bin/rm "$image" -rf /work/repos /work/edit > /dev/null 2>&1 || true
+    docker run --rm -v "$work:/work" --entrypoint /bin/rm "$image" -rf /work/repos /work/edit >/dev/null 2>&1 || true
     rm -rf "$work"
 }
 trap cleanup EXIT
@@ -92,7 +92,7 @@ image_node=$(docker run --rm --entrypoint /usr/local/bin/node "$image" --version
 [ "$host_node" = "$image_node" ] || fail "mise's Node $host_node differs from the image's $image_node"
 
 say "S9: no service publishes ports"
-compose config --format json | jq -e '[.services[] | select(.ports)] | length == 0' > /dev/null ||
+compose config --format json | jq -e '[.services[] | select(.ports)] | length == 0' >/dev/null ||
     fail "a service publishes ports"
 
 say "S10: the override leaves hardening alone"
@@ -141,7 +141,7 @@ for user in root hermes; do
 done
 
 say "S3: root in hermes cannot write the restore volume or reach the sidecar"
-if in_hermes touch /var/lib/dorothy/restore/probe 2> /dev/null; then fail "the restore volume is writable from hermes"; fi
+if in_hermes touch /var/lib/dorothy/restore/probe 2>/dev/null; then fail "the restore volume is writable from hermes"; fi
 sidecar_ip=$(docker inspect "$(compose ps -q dorothy-sync)" --format '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}')
 reach=$(in_hermes /usr/local/bin/node -e "
 const socket = require('node:net').connect(9, '$sidecar_ip');
@@ -154,14 +154,14 @@ say "step 2 and S5: a snapshot reaches dorothy-memory, redacted"
 before=$(memory_head)
 snapshot_once || fail "snapshot --once failed"
 wait_for 120 memory_moved "$before" || fail "the sidecar did not publish"
-memory_show sessions/state.sql > "$work/state.sql"
+memory_show sessions/state.sql >"$work/state.sql"
 grep -qF "$DOROTHY_SMOKE_TOKEN" "$work/state.sql" && fail "the fake token reached dorothy-memory"
 grep -qF "[REDACTED:DOROTHY_SMOKE_TOKEN]" "$work/state.sql" || fail "the fake token was not redacted"
 node "$root/smoke/restore-check.mts" "$work/state.sql" zebracorn 東京 || fail "state.sql does not restore"
 
 say "step 3: a config push is applied by the fallback apply"
 mkdir -p "$work/next"
-printf '# Smoke Dorothy\n\nYou are a smoke-test fixture. Version 2.\n' > "$work/next/SOUL.md"
+printf '# Smoke Dorothy\n\nYou are a smoke-test fixture. Version 2.\n' >"$work/next/SOUL.md"
 sha=$(config_commit "soul v2")
 snapshot_once || fail "snapshot --once failed"
 in_hermes grep -q "Version 2." /opt/data/SOUL.md || fail "SOUL.md was not applied"
@@ -181,7 +181,7 @@ snapshot_once || fail "snapshot --once failed"
 [ "$(in_hermes /command/s6-svstat -o pid /run/service/gateway-default)" = "$pid" ] ||
     fail "the rolled-back config was applied again"
 cp "$root/smoke/fixtures/config/config.yaml" "$work/next/config.yaml"
-config_commit "fixed config" > /dev/null
+config_commit "fixed config" >/dev/null
 snapshot_once || fail "snapshot --once failed"
 
 say "S2: symlinked and FIFO bundles are rejected"
@@ -215,13 +215,13 @@ fixture "$GIT init --bare -q /work/repos/memory-empty.git"
 export DOROTHY_MEMORY_REPO=file:///fixtures/memory-empty.git
 compose up -d --wait --wait-timeout 600 || fail "the seed stack did not become healthy"
 snapshot_once || fail "snapshot --once failed"
-seeded() { fixture "$GIT --git-dir /work/repos/memory-empty.git cat-file -e main:sessions/state.sql" 2> /dev/null; }
+seeded() { fixture "$GIT --git-dir /work/repos/memory-empty.git cat-file -e main:sessions/state.sql" 2>/dev/null; }
 wait_for 120 seeded || fail "the seed deployment did not push main"
 
 say "S6: a platform token without an allowlist stops the container"
 compose down --volumes
 if timeout 300 docker compose -f "$root/compose.yaml" -f "$root/smoke/compose.smoke.yaml" \
-    run --rm --no-deps -e TELEGRAM_BOT_TOKEN=1:smoke hermes > "$work/s6.log" 2>&1; then
+    run --rm --no-deps -e TELEGRAM_BOT_TOKEN=1:smoke hermes >"$work/s6.log" 2>&1; then
     fail "hermes started without an allowlist"
 fi
 grep -q TELEGRAM_ALLOWED_USERS "$work/s6.log" || fail "the refusal does not name TELEGRAM_ALLOWED_USERS"

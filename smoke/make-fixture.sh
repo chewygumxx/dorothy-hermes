@@ -32,5 +32,5 @@ run() {
 run --entrypoint /opt/hermes/bin/hermes "$image" sessions import --from claude /smoke/fixture-session.jsonl
 run --entrypoint /opt/hermes/bin/hermes "$image" backup --quick --label fixture
 run --entrypoint /usr/local/bin/node "$image" /smoke/dump-fixture.mts /opt/data \
-    > "$root/smoke/fixtures/memory/sessions/state.sql"
+    >"$root/smoke/fixtures/memory/sessions/state.sql"
 echo "wrote smoke/fixtures/memory/sessions/state.sql from $image"
