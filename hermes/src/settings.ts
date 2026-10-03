@@ -21,7 +21,7 @@ export interface PlatformEntry {
     allowAllUsers: string;
 }
 
-/** Generated from the pinned image by `scripts/platforms.py` (S6). */
+/** Generated from the pinned image by `scripts/platforms.ts` (S6). */
 export interface PlatformRegistry {
     platforms: Record<string, PlatformEntry>;
     globalAllowlist: string;

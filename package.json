@@ -45,7 +45,7 @@
         "lint:toml": "git ls-files -z '*.toml' | xargs -0 -r tombi format --check && git ls-files -z '*.toml' | xargs -0 -r tombi lint --error-on-warnings",
         "lint:yaml": "git ls-files -z '*.yaml' '*.yml' | xargs -0 -r prettier --check && git ls-files -z '*.yaml' '*.yml' | xargs -0 -r yamllint --strict",
         "prepare": "test -d node_modules/husky && husky || true",
-        "typecheck": "tsc && tsc -p hermes/src"
+        "typecheck": "tsc && tsc -p hermes/src && tsc -p scripts"
     },
     "config": {
         "commitizen": {

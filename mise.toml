@@ -75,7 +75,7 @@ node = "26.5.1"
 
 [tasks.test]
 description = "Unit tests under the image's Node"
-run         = "node --test --test-reporter=spec 'hermes/src/**/*.test.ts'"
+run         = "node --test --test-reporter=spec 'hermes/src/**/*.test.ts' 'scripts/**/*.test.ts'"
 
 [tasks.smoke]
 description = "Boot the stack against fixture repositories"

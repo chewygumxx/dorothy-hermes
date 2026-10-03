@@ -42,9 +42,9 @@ branch, commit each step on its own, and stop at the first check that fails.
 
 ## 3. Regenerate the platform registry
 
-- Run `scripts/platforms.py` inside the new image, as its docstring shows, and
-  redirect the output to `hermes/src/platforms.json`. The secrets guard blocks
-  editing that file by hand.
+- Run `scripts/platforms.ts` inside the new image and format the result, as
+  its doc comment shows. The secrets guard blocks editing
+  `hermes/src/platforms.json` by hand.
 - Read the diff. A new platform, or a new allowlist variable, changes what S6
   refuses at boot; check it against the security spec.
 
