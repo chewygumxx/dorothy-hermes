@@ -6183,7 +6183,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { checkTables, dumpDatabase } from "/opt/dorothy/src/dump.ts";
 
-const home = process.argv[2] ?? "/work/home";
+const home = process.argv[2] ?? "/opt/data";
 const snapshots = join(home, "state-snapshots");
 const latest = readdirSync(snapshots).filter((name) => name.endsWith("-fixture")).sort().at(-1);
 if (!latest) throw new Error(`no fixture snapshot in ${snapshots}`);
@@ -6208,17 +6208,20 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 image=${FIXTURE_IMAGE:-nousresearch/hermes-agent:v2026.9.21@sha256:6bece0644e29a347e5ae17db43c36938c86f171c6f5e0cef18aa2075d331f3a3}
 work=$(mktemp -d)
-chmod 0777 "$work"
+mkdir "$work/home"
+chmod 0777 "$work" "$work/home"
 trap 'docker run --rm -v "$work:/work" --entrypoint /bin/rm "$image" -rf /work/home; rm -rf "$work"' EXIT
 
+# The home is mounted at the image's own HERMES_HOME: pointing HERMES_HOME
+# elsewhere makes upstream reinstall its dependencies there.
 run() {
-    docker run --rm -u 10000:10000 -e HERMES_HOME=/work/home -e HOME=/work \
-        -v "$work:/work" -v "$root/smoke:/smoke:ro" -v "$root/hermes/src:/opt/dorothy/src:ro" "$@"
+    docker run --rm -u 10000:10000 -e HOME=/work \
+        -v "$work/home:/opt/data" -v "$root/smoke:/smoke:ro" -v "$root/hermes/src:/opt/dorothy/src:ro" "$@"
 }
 
 run --entrypoint /opt/hermes/bin/hermes "$image" sessions import --from claude /smoke/fixture-session.jsonl
 run --entrypoint /opt/hermes/bin/hermes "$image" backup --quick --label fixture
-run --entrypoint /usr/local/bin/node "$image" /smoke/dump-fixture.mts /work/home \
+run --entrypoint /usr/local/bin/node "$image" /smoke/dump-fixture.mts /opt/data \
     > "$root/smoke/fixtures/memory/sessions/state.sql"
 echo "wrote smoke/fixtures/memory/sessions/state.sql from $image"
 ```
@@ -6386,6 +6389,8 @@ config_commit() {
 }
 snapshot_once() { compose exec -T -u hermes hermes /usr/local/bin/node /opt/dorothy/src/snapshot.ts --once; }
 in_hermes() { compose exec -T hermes "$@"; }
+as_hermes() { compose exec -T -u hermes hermes "$@"; }
+sync_error_has() { in_hermes cat /var/lib/dorothy/restore/status.json | jq -r '.lastError // ""' | grep -q "$1"; }
 memory_moved() { [ "$(memory_head)" != "$1" ]; }
 # wait_for <seconds> <command...>
 wait_for() {
@@ -6439,10 +6444,18 @@ compose exec -T -u hermes hermes /opt/hermes/.venv/bin/python /smoke/search.py z
 say "S1: the memory key is absent from hermes"
 docker inspect "$(compose ps -q hermes)" --format '{{json .Config.Env}}' | grep -q DOROTHY_MEMORY_DEPLOY_KEY &&
     fail "hermes has DOROTHY_MEMORY_DEPLOY_KEY in its environment"
+# Both forms: a decoded key line, and a slice of the base64 value past the
+# PEM header (which every key, including the config key, shares). Searched
+# as root and as hermes: root lacks CAP_SYS_PTRACE, so it cannot read the
+# environ files of hermes's processes.
 key_line=$(sed -n 2p "$work/memory_key")
-if in_hermes sh -c "grep -rlsF -e '$key_line' /proc/[0-9]*/environ /opt/data /run /tmp /var/lib/dorothy"; then
-    fail "the memory key is readable inside hermes"
-fi
+key_b64=$(printf '%s' "$DOROTHY_MEMORY_DEPLOY_KEY" | cut -c 101-160)
+for user in root hermes; do
+    if compose exec -T -u "$user" hermes sh -c \
+        "grep -rlsF -e '$key_line' -e '$key_b64' /proc/[0-9]*/environ /opt/data /run /tmp /var/lib/dorothy"; then
+        fail "the memory key is readable inside hermes (as $user)"
+    fi
+done
 
 say "S3: root in hermes cannot write the restore volume or reach the sidecar"
 if in_hermes touch /var/lib/dorothy/restore/probe 2> /dev/null; then fail "the restore volume is writable from hermes"; fi
@@ -6489,18 +6502,29 @@ config_commit "fixed config" > /dev/null
 snapshot_once || fail "snapshot --once failed"
 
 say "S2: symlinked and FIFO bundles are rejected"
+# The snapshot loop would replace the planted file within an interval, so it
+# pauses; the hostile files are planted as the agent would, as hermes.
+in_hermes /command/s6-rc -d change dorothy-snapshot || fail "could not pause dorothy-snapshot"
 head=$(memory_head)
-in_hermes sh -c 'ln -sfn /tmp/dorothy/memory.key /var/lib/dorothy/outbox/bundle.json'
-sleep 40
-in_hermes cat /var/lib/dorothy/restore/status.json | jq -r .lastError | grep -q 'symbolic link' ||
-    fail "the symlinked bundle was not rejected"
-in_hermes sh -c 'rm -f /var/lib/dorothy/outbox/bundle.json && mkfifo /var/lib/dorothy/outbox/bundle.json'
-sleep 40
-in_hermes cat /var/lib/dorothy/restore/status.json | jq -r .lastError | grep -q 'not a regular file' ||
-    fail "the FIFO bundle was not rejected"
+as_hermes sh -c 'ln -sfn /tmp/dorothy/memory.key /var/lib/dorothy/outbox/bundle.json' ||
+    fail "hermes could not plant a symlink"
+wait_for 90 sync_error_has 'symbolic link' || fail "the symlinked bundle was not rejected"
+as_hermes sh -c 'rm -f /var/lib/dorothy/outbox/bundle.json && mkfifo /var/lib/dorothy/outbox/bundle.json' ||
+    fail "hermes could not plant a FIFO"
+wait_for 90 sync_error_has 'not a regular file' || fail "the FIFO bundle was not rejected"
 [ "$(memory_head)" = "$head" ] || fail "something was pushed from a hostile bundle"
-in_hermes rm -f /var/lib/dorothy/outbox/bundle.json
+as_hermes rm -f /var/lib/dorothy/outbox/bundle.json
+in_hermes /command/s6-rc -u change dorothy-snapshot || fail "could not resume dorothy-snapshot"
 snapshot_once || fail "snapshot --once failed"
+
+say "final snapshot and warm boot: a stop publishes, a restart restores nothing"
+as_hermes sh -c 'printf "final\n" > /opt/data/memories/FINAL.md'
+marker=$(in_hermes cat /opt/data/dorothy/restored)
+compose stop || fail "the stack did not stop"
+memory_show memories/FINAL.md | grep -q final || fail "the final snapshot did not reach dorothy-memory"
+compose up -d --wait --wait-timeout 600 || fail "the warm boot did not become healthy"
+[ "$(in_hermes cat /opt/data/dorothy/restored)" = "$marker" ] || fail "the warm boot restored again"
+in_hermes test -f /opt/data/memories/FINAL.md || fail "the warm boot lost memories/FINAL.md"
 
 say "step 5: a first boot against an empty memory repository seeds main"
 compose down --volumes
