@@ -17,7 +17,7 @@
     "devDependencies": {
         "@biomejs/biome": "2.5.14",
         "@chewygumxx/biome-config": "^1.0.0",
-        "@chewygumxx/commitlint-config": "^1.0.0",
+        "@chewygumxx/commitlint-config": "^1.1.0",
         "@chewygumxx/cz-commitlint": "^1.0.2",
         "@chewygumxx/remark-preset": "^1.0.3",
         "@chewygumxx/yamllint-config": "^1.0.0",
