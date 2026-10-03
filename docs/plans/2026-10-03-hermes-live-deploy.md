@@ -67,6 +67,9 @@ Deliberate departures from the spec, each folded back into it in Task 18:
   `snapshot.ts --once`.
 - `DOROTHY_HOST` names the server in sync commit messages; the container's
   own hostname is meaningless.
+- The S15 ssh command gains `ConnectTimeout` and `ServerAlive*` options, and
+  git has no overall timeout: a first clone of a long memory history must
+  not be killed, while a stalled connection still ends.
 
 ## Global Constraints
 
@@ -78,10 +81,11 @@ Deliberate departures from the spec, each folded back into it in Task 18:
   end in `.ts`; type-only imports use `import type`.
 - Our code never opens the live `state.db`; only `hermes backup --quick`
   copies.
-- git runs as `/usr/bin/git` through `execFile`, never a shell, with
-  `GIT_SSH_COMMAND` set to `/usr/bin/ssh -F none -i <key> -o
-  IdentitiesOnly=yes -o UserKnownHostsFile=/opt/dorothy/known_hosts -o
-  StrictHostKeyChecking=yes`.
+- git runs as `/usr/bin/git` through `execFile`, never a shell, with no
+  overall timeout and `GIT_SSH_COMMAND` set to `/usr/bin/ssh -F none -i <key>
+  -o IdentitiesOnly=yes -o UserKnownHostsFile=/opt/dorothy/known_hosts -o
+  StrictHostKeyChecking=yes -o ConnectTimeout=30 -o ServerAliveInterval=15 -o
+  ServerAliveCountMax=4`.
 - Commits by our code are authored `Dorothy <noreply@dorothy.invalid>`.
 - Sync commit message: `chore(sync): Snapshot from <host>` with a body listing
   which of sessions, memories, skills and scheduled jobs changed.
@@ -2909,7 +2913,7 @@ git commit -m "feat: Read and write trees without following links"
 
 - Produces: `GIT = "/usr/bin/git"`;
   `class GitError extends Error { output: string; exitCode: number | null }`;
-  `interface GitOptions { keyPath?; knownHostsPath?; env?: NodeJS.ProcessEnv; timeoutMs?: number }`;
+  `interface GitOptions { keyPath?; knownHostsPath?; env?: NodeJS.ProcessEnv; timeoutMs?: number; signal?: AbortSignal }`;
   `sshCommand(keyPath: string, knownHostsPath: string): string`;
   `type PushResult = "pushed" | "rejected" | "failed"`;
   `class Git { readonly dir: string; constructor(dir, options?); run(args, cwd?): Promise<string>; clone(url): Promise<void>; head(): Promise<string | null>; remoteHead(): Promise<string | null>; fetch(): Promise<void>; isAncestor(a, b): Promise<boolean>; resetHard(ref): Promise<void>; unpushed(): Promise<number>; addAll(): Promise<void>; stagedPaths(): Promise<string[]>; commit(message): Promise<void>; push(): Promise<PushResult>; setRemote(url): Promise<void> }`.
@@ -3057,7 +3061,8 @@ test("the ssh command matches the spec", () => {
     assert.equal(
         sshCommand("/tmp/dorothy/memory.key", "/opt/dorothy/known_hosts"),
         "/usr/bin/ssh -F none -i /tmp/dorothy/memory.key -o IdentitiesOnly=yes " +
-            "-o UserKnownHostsFile=/opt/dorothy/known_hosts -o StrictHostKeyChecking=yes",
+            "-o UserKnownHostsFile=/opt/dorothy/known_hosts -o StrictHostKeyChecking=yes " +
+            "-o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4",
     );
 });
 ```
@@ -3092,7 +3097,13 @@ export interface GitOptions {
     knownHostsPath?: string;
     /** Base environment; defaults to process.env. */
     env?: NodeJS.ProcessEnv;
+    /**
+     * None by default: a clone of a long history may take as long as it
+     * takes, and a stalled connection is cut by ssh's keepalives instead.
+     */
     timeoutMs?: number;
+    /** Aborting sends SIGTERM to the running git, as the service stops. */
+    signal?: AbortSignal;
 }
 
 export type PushResult = "pushed" | "rejected" | "failed";
@@ -3103,7 +3114,8 @@ const DOROTHY = ["-c", "user.name=Dorothy", "-c", "user.email=noreply@dorothy.in
 export function sshCommand(keyPath: string, knownHostsPath: string): string {
     return (
         `/usr/bin/ssh -F none -i ${keyPath} -o IdentitiesOnly=yes ` +
-        `-o UserKnownHostsFile=${knownHostsPath} -o StrictHostKeyChecking=yes`
+        `-o UserKnownHostsFile=${knownHostsPath} -o StrictHostKeyChecking=yes ` +
+        "-o ConnectTimeout=30 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
     );
 }
 
@@ -3132,7 +3144,13 @@ export class Git {
                 this.#options.knownHostsPath ?? "/opt/dorothy/known_hosts",
             );
         }
-        const options = { cwd, env, maxBuffer: 256 * 1024 * 1024, timeout: this.#options.timeoutMs ?? 300_000 };
+        const options = {
+            cwd,
+            env,
+            maxBuffer: 256 * 1024 * 1024,
+            timeout: this.#options.timeoutMs ?? 0,
+            signal: this.#options.signal,
+        };
         return new Promise((resolve, reject) => {
             execFile(GIT, args, options, (error, stdout, stderr) => {
                 if (!error) {
@@ -3519,7 +3537,7 @@ git commit -m "feat: Wrap the Hermes CLI and s6 status"
 - Produces: `CONFIG_FILES`; `SKILLS_DIR = "/opt/data/dorothy/config/skills"`;
   `interface ConfigPaths { home; checkout; lastGood; applyStatus }`;
   `configPaths(home?: string): ConfigPaths`;
-  `configGit(paths: ContainerPaths, env?: NodeJS.ProcessEnv): Git`;
+  `configGit(paths: ContainerPaths, env?: NodeJS.ProcessEnv, signal?: AbortSignal): Git`;
   `copyConfig(from: string, to: string): void`;
   `sameConfig(a: string, b: string): boolean`;
   `skillsWarning(configYaml: string): string | null`;
@@ -3727,11 +3745,12 @@ export function configPaths(home = "/opt/data"): ConfigPaths {
     };
 }
 
-export function configGit(paths: ContainerPaths, env?: NodeJS.ProcessEnv): Git {
+export function configGit(paths: ContainerPaths, env?: NodeJS.ProcessEnv, signal?: AbortSignal): Git {
     return new Git(configPaths(paths.home).checkout, {
         keyPath: join(paths.run, "config.key"),
         knownHostsPath: paths.knownHosts,
         env,
+        signal,
     });
 }
 
@@ -4401,7 +4420,7 @@ git commit -m "feat: Bootstrap config and restore memory at boot"
 
 - Consumes: everything in Tasks 2 to 11.
 - Produces: `SNAPSHOT_LABEL = "dorothy-sync"`;
-  `interface SnapshotDeps extends Clock { env: Env; paths: ContainerPaths; hermes: HermesCli; log: Log; gitEnv?; timing?: GatewayTestTiming }`;
+  `interface SnapshotDeps extends Clock { env: Env; paths: ContainerPaths; hermes: HermesCli; log: Log; gitEnv?; timing?: GatewayTestTiming; signal?: AbortSignal }`;
   `bundledSkillNames(home: string): Set<string>`;
   `snapshotOnce(deps, options?: { final?: boolean }): Promise<boolean>`
   (false when not yet restored);
@@ -4610,13 +4629,15 @@ export interface SnapshotDeps extends Clock {
     log: Log;
     gitEnv?: NodeJS.ProcessEnv;
     timing?: GatewayTestTiming;
+    /** Stops a running fetch when the service stops. */
+    signal?: AbortSignal;
 }
 
 function applyDeps(deps: SnapshotDeps): ApplyDeps {
     return {
         now: deps.now,
         sleep: deps.sleep,
-        git: configGit(deps.paths, deps.gitEnv),
+        git: configGit(deps.paths, deps.gitEnv, deps.signal),
         hermes: deps.hermes,
         paths: configPaths(deps.paths.home),
         log: deps.log,
@@ -4774,6 +4795,7 @@ if (import.meta.main) {
         paths: IMAGE_CONTAINER_PATHS,
         hermes: createHermesCli(undefined, controller.signal),
         log,
+        signal: controller.signal,
     };
     const args = process.argv.slice(2);
     const work =
