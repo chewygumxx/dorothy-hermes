@@ -177,7 +177,8 @@ can be redirected by a symlink to `/etc` or elsewhere.
 
 **Mitigation.** Root creates and changes ownership only of `/run/dorothy`
 (a fresh tmpfs at each boot, prepared before any `hermes` process runs) and the
-`/var/lib/dorothy` mount point, never recursively. Everything under
+`/var/lib/dorothy` mount point, never recursively, and writes only the
+`bootstrapped` marker inside it, which `hermes` cannot reach. Everything under
 `/opt/data/dorothy` is created by code running as `hermes`. Root's only contact
 with `/opt/data` is an existence test on `state.db`. The cycle script takes
 `sync.lock` in root-owned `/run/dorothy`. `cont-finish.d` only runs the cycle
