@@ -374,6 +374,25 @@ test("an .env disguised with control characters or NULs still loses its allowlis
     );
 });
 
+test("an access setting the registry does not know is still cleaned", async (t) => {
+    const { paths, deps } = await setup(t);
+    writeFiles(paths.home, {
+        ".env": [
+            "NEWCHAT_ALLOWED_USERS=*",
+            "NEWCHAT_ALLOW_ALL_USERS=true",
+            "NEWCHAT_DM_POLICY=open",
+            "NEWCHAT_ALLOW_FROM=*",
+            "NEWCHAT_ALLOWED_CHANNELS=c1",
+            "OTHER=1\n",
+        ].join("\n"),
+    });
+    await bootstrap(deps);
+    assert.equal(
+        readFileSync(join(paths.home, ".env"), "utf8"),
+        "NEWCHAT_ALLOWED_CHANNELS=c1\nOTHER=1\n",
+    );
+});
+
 test("a UTF-16 .env is cleaned as upstream decodes it; UTF-32 is set aside", async (t) => {
     const { paths, deps } = await setup(t);
     const env = join(paths.home, ".env");

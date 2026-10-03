@@ -13,6 +13,7 @@ import { test } from "node:test";
 import {
     allowlistNames,
     hermesSettings,
+    isAccessVariable,
     loadRegistry,
     type PlatformRegistry,
     repoName,
@@ -223,6 +224,55 @@ test("a wildcard in any grant list is refused, whatever its suffix", () => {
             hermesSettings({ ...base, [name]: "a,b" }, withLists),
         );
     }
+});
+
+test("an access setting the registry does not know is refused by its name", () => {
+    for (const [name, value] of [
+        ["NEWCHAT_ALLOW_ALL_USERS", "true"],
+        ["NEWCHAT_ALLOW_BOTS", "1"],
+        ["NEWCHAT_DM_POLICY", "open"],
+        ["NEWCHAT_GROUP_POLICY", "OPEN"],
+        ["NEWCHAT_ALLOWED_USERS", "42,*"],
+        ["NEWCHAT_ALLOW_FROM", "*"],
+    ] as const) {
+        assert.throws(
+            () => hermesSettings({ ...base, [name]: value }, registry),
+            new RegExp(name),
+        );
+    }
+    // Values a person would set, and names that only narrow or are not access.
+    for (const [name, value] of [
+        ["NEWCHAT_ALLOW_ALL_USERS", "false"],
+        ["NEWCHAT_DM_POLICY", "pairing"],
+        ["NEWCHAT_ALLOWED_USERS", "42,43"],
+        ["NEWCHAT_ALLOWED_CHANNELS", "*"],
+        ["SANDBOX_ALLOWED_TOOLS", "*"],
+        ["DISCORD_COMMAND_SYNC_POLICY", "open"],
+    ] as const) {
+        assert.doesNotThrow(() =>
+            hermesSettings({ ...base, [name]: value }, registry),
+        );
+    }
+});
+
+test("isAccessVariable covers the registry and unknown access names", () => {
+    const isAccess = isAccessVariable(registry);
+    for (const name of [
+        "TELEGRAM_ALLOWED_USERS",
+        "TELEGRAM_GROUP_ALLOWED_USERS",
+        "NEWCHAT_ALLOWED_USERS",
+        "NEWCHAT_ALLOW_FROM",
+        "NEWCHAT_DM_POLICY",
+        "NEWCHAT_ALLOW_BOTS",
+    ])
+        assert.ok(isAccess(name), name);
+    for (const name of [
+        "NEWCHAT_ALLOWED_CHANNELS",
+        "SANDBOX_ALLOWED_TOOLS",
+        "DISCORD_COMMAND_SYNC_POLICY",
+        "TELEGRAM_BOT_TOKEN",
+    ])
+        assert.ok(!isAccess(name), name);
 });
 
 test("the generated registry covers what the sweep judged a grant", () => {

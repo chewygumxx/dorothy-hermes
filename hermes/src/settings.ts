@@ -66,9 +66,31 @@ const SWITCH = /_ALLOW_ALL_USERS$|_ALLOW_BOTS$/;
 /** open | allowlist | pairing | disabled. */
 const POLICY = /_POLICY$/;
 
+/**
+ * Access settings recognised by name alone, for what the registry does not
+ * know yet (an upstream bump before platforms.json is regenerated). Narrower
+ * than the sweep in scripts/platforms.ts: names that only narrow where the
+ * bot answers (`*_ALLOWED_CHANNELS`) or are not about people stay out.
+ */
+const ACCESS_BY_NAME =
+    /^[A-Z][A-Z0-9_]*_(?:ALLOW_ALL_USERS|ALLOW_BOTS|ALLOWED_USERS|ALLOW_FROM|DM_POLICY|GROUP_POLICY)$/;
+
+/** Whether `name` grants access, by the registry or by its name. */
+export function isAccessVariable(
+    registry: PlatformRegistry,
+): (name: string) => boolean {
+    const names = new Set(allowlistNames(registry));
+    return (name) => names.has(name) || ACCESS_BY_NAME.test(name);
+}
+
 export function checkAllowlists(env: Env, registry: PlatformRegistry): void {
     const platforms = Object.values(registry.platforms);
-    const extra = registry.extraAllowVariables;
+    const extra = [
+        ...new Set([
+            ...registry.extraAllowVariables,
+            ...Object.keys(env).filter((name) => ACCESS_BY_NAME.test(name)),
+        ]),
+    ];
     const allowAll = [
         registry.globalAllowAll,
         ...platforms.map((entry) => entry.allowAllUsers),

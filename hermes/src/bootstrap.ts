@@ -42,9 +42,9 @@ import {
 } from "./hermes.ts";
 import { dotenvSpans } from "./redact.ts";
 import {
-    allowlistNames,
     type Env,
     hermesSettings,
+    isAccessVariable,
     loadRegistry,
     type PlatformRegistry,
 } from "./settings.ts";
@@ -105,14 +105,14 @@ function decodeDotenv(raw: Buffer): string | null {
 }
 
 /**
- * Removes what the deployment provides and every allowlist (S6), and
+ * Removes what the deployment provides and every access setting (S6), and
  * rewrites the file as plain UTF-8 so upstream reads exactly what was
  * cleaned. A file that cannot be decoded that way is set aside.
  */
 export function cleanDotenv(
     path: string,
     env: Env,
-    allowlists: string[],
+    isAccess: (name: string) => boolean,
 ): string[] {
     let raw: Buffer;
     try {
@@ -126,7 +126,6 @@ export function cleanDotenv(
         renameSync(path, `${path}.refused`);
         return ["the whole file (UTF-32), moved to .env.refused"];
     }
-    const drop = new Set(allowlists);
     const removed: string[] = [];
     const kept = dotenvSpans(text).filter((span) => {
         if (span.invalid) {
@@ -140,7 +139,7 @@ export function cleanDotenv(
         const name = span.name;
         if (
             name === undefined ||
-            (!drop.has(name) && !(env[name] ?? "").trim())
+            (!isAccess(name) && !(env[name] ?? "").trim())
         )
             return true;
         removed.push(name);
@@ -273,7 +272,7 @@ export async function bootstrap(deps: BootstrapDeps): Promise<void> {
     const removed = cleanDotenv(
         join(home, ".env"),
         deps.env,
-        allowlistNames(deps.registry),
+        isAccessVariable(deps.registry),
     );
     if (removed.length > 0)
         deps.log(`removed from .env: ${removed.join(", ")}`);
