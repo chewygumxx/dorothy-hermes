@@ -1992,7 +1992,7 @@ test("FTS objects, statistics and trash tables are omitted", (t) => {
 
 test("indexes, views and triggers follow all data", (t) => {
     const sql = dumpDatabase(fixture(t));
-    const lastInsert = sql.lastIndexOf("INSERT INTO");
+    const lastInsert = sql.lastIndexOf("\nINSERT INTO ");
     assert.ok(sql.indexOf("CREATE INDEX") > lastInsert);
     assert.ok(sql.indexOf("CREATE TRIGGER") > lastInsert);
     assert.ok(sql.startsWith("PRAGMA foreign_keys=OFF;\nBEGIN;\nPRAGMA user_version=7;\n"));
