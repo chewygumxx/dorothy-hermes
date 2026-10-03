@@ -4,8 +4,8 @@
 
 #
 #
-# ~chewygumxx/claude-library.git
-# ::: :/plugins/prohibit-em-dash/hooks/prohibit-em-dash.sh
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/.claude/hooks/prohibit-em-dash.sh
 #
 #
 
