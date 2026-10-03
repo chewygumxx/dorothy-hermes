@@ -557,18 +557,22 @@ At the end of the file:
 ```toml
 [tasks.test]
 description = "Unit tests under the image's Node"
-run = "node --test --test-reporter=spec 'hermes/src/**/*.test.ts'"
+run         = "node --test --test-reporter=spec 'hermes/src/**/*.test.ts'"
 
 [tasks.smoke]
 description = "Boot the stack against fixture repositories"
-run = "sh smoke/run.sh"
+run         = "sh smoke/run.sh"
 
 [tasks.up]
 description = "Start Dorothy"
-run = "DOROTHY_HOST=$(hostname) dotenvx run -- docker compose up -d --wait --wait-timeout 600"
+run         = "DOROTHY_HOST=$(hostname) dotenvx run -- docker compose up -d --wait --wait-timeout 600"
 ```
 
-Run `mise install` and `bun run lint:toml`. Expected: both succeed.
+tombi aligns `=` within a group, which is why `run` is padded; let it settle
+the rest (the neighbouring `bun` and `jq` lines realign):
+
+Run `mise install`, `bun run format:toml` and `bun run lint:toml`. Expected:
+all succeed.
 
 - [ ] **Step 4: Track the encrypted `.env`**
 
