@@ -3,6 +3,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import type { TestContext } from "node:test";
+import type { GatewayStatus, HermesCli } from "./hermes.ts";
 import type { Clock } from "./util.ts";
 
 export function tempDir(t: TestContext): string {
@@ -110,4 +111,46 @@ export function remoteShow(url: string, path: string): string | null {
     } catch {
         return null;
     }
+}
+
+export interface FakeHermesOptions {
+    status?(): GatewayStatus | null;
+    snapshot?(label: string): Promise<string>;
+    restart?(): void;
+    start?(): void;
+}
+
+export interface FakeHermes extends HermesCli {
+    calls: string[];
+}
+
+export function fakeHermes(options: FakeHermesOptions = {}): FakeHermes {
+    const calls: string[] = [];
+    return {
+        calls,
+        async snapshot(label) {
+            calls.push(`snapshot ${label}`);
+            if (!options.snapshot) throw new Error("no fake snapshot");
+            return options.snapshot(label);
+        },
+        async deleteSnapshot(dir) {
+            calls.push("deleteSnapshot");
+            rmSync(dir, { recursive: true, force: true });
+        },
+        async restartGateway() {
+            calls.push("restart");
+            options.restart?.();
+        },
+        async startGateway() {
+            calls.push("start");
+            options.start?.();
+        },
+        async gatewayStatus() {
+            return options.status ? options.status() : { up: true, pid: 100 };
+        },
+        async optimizeStorage() {
+            calls.push("optimize");
+            return "";
+        },
+    };
 }
