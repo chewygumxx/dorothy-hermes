@@ -37,60 +37,52 @@ Upstream's
 states that the only security boundary against an adversarial LLM is the
 operating system. Approval prompts, output redaction, environment scrubbing and
 tool allowlists inside the agent are heuristics. This design adopts that
-stance: anything the agent's Unix user (`hermes`, UID 10000) can read or do is
-treated as available to an attacker.
+stance.
 
-No network access is needed to become that attacker. Prompt injection reaches
-the agent through anything entering its context: messages from allowlisted
-users and whatever those conversations pull in (web pages, email, files, tool
-and MCP output). Closing public ports defends against the internet; it does
-nothing against the agent. Most of this document is about the agent.
+No network access is needed to attack the agent. Prompt injection reaches it
+through anything entering its context: messages from allowlisted users and
+whatever those conversations pull in (web pages, email, files, tool and MCP
+output). Closing public ports defends against the internet; it does nothing
+against the agent.
+
+Inside the upstream container, the agent can become root (S4). The boundary
+this design relies on is therefore the container, the same one upstream's
+policy names, and not any user or permission inside it. The `hermes`
+container is treated as wholly agent-controlled.
 
 ### Assets
 
-| Asset                               | Location                   | Impact if compromised                                |
-| ----------------------------------- | -------------------------- | ---------------------------------------------------- |
-| `dorothy-memory` history            | GitHub                     | Durable memory; every cold boot restores from it     |
-| Memory deploy key                   | `/run/dorothy/private/`    | Writes `dorothy-memory`; rewrites it without S1      |
-| `dorothy-config` `main`             | GitHub                     | Controls prompt, tools, MCP servers: code execution  |
-| LLM credential                      | container environment      | Spend; provider account access                       |
-| Platform tokens                     | container environment      | Impersonating Dorothy on messaging platforms         |
-| Transcripts                         | `state.db`, `state.sql`    | Everything said to and done by the agent             |
-| Config deploy key, webhook secret   | `/run/dorothy/hermes/`     | Low: read config, trigger a redundant apply          |
-| `TUNNEL_TOKEN`                      | `cloudflared` environment  | Running a connector for the tunnel                   |
-| `DOTENV_PRIVATE_KEY`                | server `.env.keys`         | Decrypts every secret above                          |
+| Asset                               | Location                       | Impact if compromised                                |
+| ----------------------------------- | ------------------------------ | ---------------------------------------------------- |
+| `dorothy-memory` history            | GitHub                         | Durable memory; every cold boot restores from it     |
+| Memory deploy key                   | `dorothy-sync` only            | Writes `dorothy-memory`; rewrites it without a ruleset |
+| `dorothy-config` `main`             | GitHub                         | Controls prompt, tools, MCP servers: code execution  |
+| LLM credential                      | `hermes` environment           | Spend; provider account access                       |
+| Platform tokens                     | `hermes` environment           | Impersonating Dorothy on messaging platforms         |
+| Transcripts                         | `state.db`, `state.sql`        | Everything said to and done by the agent             |
+| Config deploy key, webhook secret   | `hermes` secrets               | Low: read config, trigger a redundant apply          |
+| `TUNNEL_TOKEN`                      | `cloudflared` environment      | Running a connector for the tunnel                   |
+| `DOTENV_PRIVATE_KEY`                | server `.env.keys`             | Decrypts every secret above                          |
 
 ### Adversaries
 
 - **Internet:** reaches the tunnel hostname and nothing else.
-- **Injected agent:** Hermes acting on attacker-supplied text, with everything
-  UID 10000 can do inside the container.
+- **Injected agent:** Hermes acting on attacker-supplied text, with root
+  inside the `hermes` container.
 - **Stranger:** messages the bot from an account not on its allowlist.
 - **GitHub takeover:** can push to either repository.
 - **Upstream:** a malicious or vulnerable image release.
 - **Host attacker:** a shell on the server.
 
-### Principals in the container
+### Rules
 
-| Principal | UID   | Runs                                                     |
-| --------- | ----- | -------------------------------------------------------- |
-| `root`    | 0     | s6, shell stubs, the sync cycle script                   |
-| `hermes`  | 10000 | Hermes, bootstrap step, snapshot step, webhook, health   |
-| `dorothy` | 10001 | Publish step only                                        |
+Every mitigation below is an instance of one of these:
 
-`dorothy` exists for one reason: to hold write access to `dorothy-memory` where
-the agent cannot reach it. The root bootstrap stub adds it to `/etc/passwd`
-when absent (the container layer is recreated with each container, so no
-derived image is needed). Its primary group is `dorothy`; its supplementary
-group `hermes` lets it read group-readable files that Hermes-side steps
-produce. Nothing makes `dorothy` readable or writable by `hermes`.
-
-Two rules follow, and every mitigation below is an instance of one of them:
-
-1. **Nothing the agent can read grants more than the agent already has.**
-2. **Nothing more privileged than the agent trusts a path the agent can
-   write.** Root and `dorothy` consume agent output only through one
-   validated file (S2), and act only on paths the agent cannot write.
+1. **The `hermes` container holds nothing that grants more than the agent
+   already has.** Anything in it is assumed read by the agent.
+2. **The trusted side consumes agent output only as one validated file on a
+   volume mounted read-only, and shares no writable path, network or
+   process namespace with the `hermes` container.**
 
 ## Threats and mitigations
 
@@ -100,112 +92,106 @@ Identifiers are stable; the implementation plan and tests refer to them.
 
 **Threat.** With the key, the agent can push to `dorothy-memory` and, unless
 GitHub prevents it, force-push: rewriting history and planting memories or
-skills that every later cold boot restores. In the original design our code
-ran as `hermes` and the key reached the gateway's environment through
-`with-contenv` (upstream's `main-wrapper.sh` launches the gateway that way).
+skills that every later cold boot restores.
 
 **Mitigation.**
 
-- The root bootstrap stub writes the key to `/run/dorothy/private/memory.key`
-  (`0400`, owner `dorothy`) in a directory owned by `dorothy` with mode
-  `0700`. `hermes` cannot list, read or hardlink it.
-- The stub then deletes `DOROTHY_MEMORY_DEPLOY_KEY`,
-  `DOROTHY_CONFIG_DEPLOY_KEY` and `DOROTHY_WEBHOOK_SECRET` from
-  `/run/s6/container_environment`, which `with-contenv` reads to build the
-  environment of the gateway and of our own services. The gateway, and every
-  process the agent spawns, never receives them. PID 1's environment belongs
-  to root and is not readable by `hermes`.
-- Only the publish step, running as `dorothy`, uses the key.
-- A GitHub ruleset on `dorothy-memory` `main` blocks force pushes and branch
-  deletion, with no bypass for deploy keys. A stolen key can only add
-  commits, which S13 makes recoverable.
+- The key is a compose secret listed only by `dorothy-sync`. It never enters
+  the `hermes` container's environment, filesystem or volumes, so neither
+  root inside that container nor `docker exec` into it can find it.
+- `dorothy-sync` runs no agent code, listens on no port, and sits on its own
+  network (S3).
+- Where available (GitHub Pro for private personal repositories), a ruleset
+  on `dorothy-memory` `main` blocks force pushes and branch deletion, with no
+  bypass for deploy keys. This is defence in depth; the sidecar never forces.
 
-**Verification.** Smoke, as `hermes`: listing `/run/dorothy/private` and
-reading the key fail; `/run/s6/container_environment` lacks the three names;
-the gateway's `/proc/<pid>/environ` lacks them.
+**Verification.** Smoke: `docker inspect` lists no `memory_deploy_key` for
+`hermes`; inside `hermes`, `/run/secrets` lacks it and no process environment
+holds it.
 
-### S2. The agent smuggles data into the publish step
+### S2. The agent smuggles data into the sidecar
 
-**Threat.** The publish step runs as `dorothy` and consumes what Hermes-side
-code produced. Copying an agent-writable tree would follow a planted symlink or
-hardlink to the key and commit it, or a path such as `.git/config` would set
-`core.sshCommand` and run code as `dorothy`.
+**Threat.** The sidecar consumes what the `hermes` container produced. A
+symlink would lead it to read its own key and publish it; a path such as
+`.git/config` would set `core.sshCommand` and run code in the sidecar.
 
-**Mitigation.** The hand-off is a single file. The snapshot step (`hermes`)
-writes `/opt/data/dorothy/outbox/bundle.json`, holding the `state.sql` text
-and the mirrored memory and skill files as `{ path, content }` entries. The
-publish step:
+**Mitigation.** The hand-off is one file, `bundle.json`, at the root of the
+`dorothy-outbox` volume, which the sidecar mounts read-only. The volume root
+is a mount point in the sidecar, so only the file name itself is
+agent-controlled. The sidecar:
 
 - Opens it with `O_NOFOLLOW` and checks, with `fstat` on the open descriptor,
-  that it is a regular file owned by UID 10000 with one link and no larger
-  than `DOROTHY_BUNDLE_MAX_BYTES` (default 256 MiB). An agent-planted link to
-  a file `hermes` does not own fails the owner check.
-- Accepts only relative paths under `memories/`, `skills/`, or exactly
-  `sessions/state.sql`, with no empty, `.` or `..` segment and no segment
-  starting with `.`. Any other entry fails the whole cycle.
-- Writes each file itself into its own checkout. It never copies directories,
-  never follows links, and runs git only in its own checkout (S3).
+  that it is a regular file no larger than `DOROTHY_BUNDLE_MAX_BYTES`
+  (default 256 MiB). Hardlinks cannot cross mounts.
+- Accepts only the paths, modes and encodings of the bundle format. Any other
+  entry fails the whole cycle.
+- Writes each file itself into its own checkout. It never copies directories
+  or follows links, and runs git only in its own checkout (S15).
 
-The bundle's contents remain agent-controlled, which is inherent: the agent's
+The bundle's content remains agent-controlled, which is inherent: the agent's
 memory is the agent's to write (S13).
 
-**Verification.** Unit: symlinked bundle, two-link bundle, `..`, `.git/x`,
-absolute path, oversize; each fails without touching the checkout. Smoke: a
-bundle owned by root is rejected and nothing is pushed.
+**Verification.** Unit: symlinked, non-regular and oversize bundles; `..`,
+`.git/x`, absolute paths and bad modes; each fails without touching the
+checkout. Smoke: a symlinked bundle is rejected and nothing is pushed.
 
-### S3. The agent tampers with `dorothy`'s checkout
+### S3. The agent tampers with the sidecar's state
 
-**Threat.** In a directory `hermes` can write, the agent can rename the memory
-checkout and substitute a crafted repository. Git honours that repository's
-config (`core.sshCommand`, `core.fsmonitor`, hooks), running code as
-`dorothy`.
+**Threat.** Write access to the sidecar's checkout, its restore output or its
+network would let the agent plant git configuration, forge a restore, or
+attack the process.
 
-**Mitigation.** A second named volume, `dorothy-state`, is mounted at
-`/var/lib/dorothy`, owned by `dorothy:hermes` with mode `0750`, and holds the
-memory checkout, the `bootstrapped` marker and `status/sync.json`. A mount
-point cannot be renamed, and `hermes` can write nothing beneath it. `dorothy`
-runs with umask `0027`, so `hermes` can read the checkout (needed for a cold
-restore) but not change it.
+**Mitigation.**
 
-**Verification.** Smoke, as `hermes`: creating, renaming or deleting anything
-under `/var/lib/dorothy` fails.
+- `dorothy-state` (the checkout and status) is not mounted in `hermes`.
+- `dorothy-restore` is mounted read-only in `hermes`; remounting needs
+  `CAP_SYS_ADMIN`, which no container has (S10).
+- The sidecar's network, `sync`, is shared with no other service, and the
+  sidecar listens on nothing.
+- The sidecar's root filesystem is read-only.
 
-### S4. Root follows an agent-planted link
+**Verification.** Smoke: as root in `hermes`, writing to
+`/var/lib/dorothy/restore` fails and the sidecar's address is unreachable.
 
-**Threat.** Root running `chown`, `mkdir -p` or `rm` on an agent-writable path
-can be redirected by a symlink to `/etc` or elsewhere.
+### S4. The agent is root in the `hermes` container (accepted)
 
-**Mitigation.** Root creates and changes ownership only of `/run/dorothy`
-(a fresh tmpfs at each boot, prepared before any `hermes` process runs) and the
-`/var/lib/dorothy` mount point, never recursively, and writes only the
-`bootstrapped` marker inside it, which `hermes` cannot reach. Everything under
-`/opt/data/dorothy` is created by code running as `hermes`. Root's only contact
-with `/opt/data` is an existence test on `state.db`. The cycle script takes
-`sync.lock` in root-owned `/run/dorothy`. `cont-finish.d` only runs the cycle
-script, which drops privileges for every step.
+**Threat.** Two upstream designs let UID 10000 become root inside the
+container:
 
-**Verification.** Shell stubs stay short enough to audit line by line in
-review. Smoke: `/opt/data/dorothy` replaced by a symlink to `/etc` before boot
-leaves `/etc` unchanged.
+- `02-reconcile-profiles` hands `/run/service` and the s6-svscan control
+  files to `hermes`, and s6-supervise runs each service's `run` script as
+  root before it drops privileges. The agent can write a `run` script.
+- The image's `PATH` includes the agent-writable `/opt/data/.local/bin`
+  before `/usr/bin`, and root scripts inherit it.
+
+Upstream needs the first for its own gateway supervision, and its policy
+names the container as the boundary, so neither is fought here.
+
+**Consequence.** Everything inside `hermes` is the agent's: the LLM
+credential, platform tokens, the config key, the webhook secret, every file
+in `/opt/data`, status files and pairing stores. Rule 1 keeps that set to
+what the agent needs anyway; S10 and S11 make the container a real boundary.
+Our stubs use absolute paths for correctness only.
 
 ### S5. Secrets leak into GitHub through transcripts
 
 **Threat.** Transcripts include tool output. An `env` listing, an error
-message or a pasted token lands in `state.sql` and, because S1 forbids
-rewriting history, stays in `dorothy-memory` permanently.
+message or a pasted token lands in `state.sql` and, because history is never
+rewritten, stays in `dorothy-memory` permanently.
 
-**Mitigation.** Before writing anything, the publish step replaces every exact
-occurrence of every known secret value with `[REDACTED:<NAME>]` in all bundle
-content. Known values are those of the variables in the deployment design's
-secrets table that the container receives, plus any variable in its
-environment whose name ends in `_TOKEN`, `_KEY`, `_SECRET` or `_PASSWORD`.
-Values shorter than eight characters are skipped. Each deploy key is redacted
-in its base64 form, its decoded form, and per decoded line longer than 20
-characters.
+**Mitigation.** Before writing the bundle, the snapshot step replaces every
+occurrence of every known secret value with `[REDACTED:<NAME>]` across all
+bundle content. Known values are every file in `/run/secrets`, the
+deployment's secret variables, and any environment variable whose name ends
+in `_TOKEN`, `_KEY`, `_SECRET` or `_PASSWORD`. Each value is matched as
+written, in the hex form the dump uses for blobs, and, for keys, per decoded
+line longer than 20 characters. Values shorter than eight characters are
+skipped. The memory key never reaches the `hermes` container, so it cannot
+appear in a transcript.
 
-This catches accidents, not an adversary: an injected agent can encode a
-secret, and has more direct exfiltration routes (S12). A leak found later is
-handled by rotation (see Secret rotation), not by history rewriting.
+This runs on the untrusted side and catches accidents, not an adversary,
+which can encode a secret and has more direct exfiltration routes (S12). A
+leak found later is handled by rotation, not by rewriting history.
 
 **Verification.** Unit: each form is redacted, short values are not. Smoke: a
 session containing the fixture's fake token is pushed redacted.
@@ -216,33 +202,37 @@ session containing the fixture's fake token is pushed redacted.
 
 **Mitigation.**
 
-- Upstream policy requires every network-exposed adapter to refuse work until
-  an allowlist is set; failing open is an upstream bug.
-- `settings.ts` additionally refuses to start when a platform token is set
-  without that platform's `*_ALLOWED_USERS` variable, or when an allow-all
-  override is set. The variable names are taken from the pinned image's
-  platform registry during implementation. A refusal stops the container
-  (`S6_BEHAVIOUR_IF_STAGE2_FAILS=2`) rather than running open.
-- Everyone on an allowlist is fully trusted (upstream does not model
-  per-caller capabilities), so allowlists hold only the operator.
-- Implementation confirms that DM pairing approval is operator-only (CLI
-  inside the container) and records it here.
+- The `*_ALLOWED_USERS` variables in the encrypted `.env` are the only source
+  of truth for who may talk to Dorothy. Allowlists hold only the operator:
+  upstream does not model per-caller capabilities.
+- Upstream policy requires adapters to refuse work until an allowlist is set.
+  `settings.ts` also refuses to start when a platform token lacks its
+  allowlist or an allow-all override is set, with the names taken from the
+  pinned image's platform registry. A refusal stops the container.
+- At each boot, bootstrap removes deployment-provided variables from
+  `/opt/data/.env` (upstream loads that file over the process environment)
+  and empties the pairing stores, which grant access in addition to the
+  allowlist.
 
-**Verification.** Unit: `settings.ts` refusals. Smoke: a fixture with a
-platform token and no allowlist exits non-zero.
+**Accepted.** DM pairing approval runs as `hermes`, so the agent can approve
+a stranger itself. Such an approval lasts until the next boot.
+
+**Verification.** Unit: `settings.ts` refusals; boot cleanup. Smoke: a
+platform token without an allowlist stops the container.
 
 ### S7. A config push executes code
 
 **Threat.** `config.yaml` selects tools, the terminal backend and MCP server
 commands, and the webhook applies it within seconds. Push access to
-`dorothy-config` `main` is code execution as `hermes`.
+`dorothy-config` `main` is code execution in `hermes`.
 
 **Mitigation.**
 
 - Applies use only `origin/main` fetched over SSH with pinned host keys; the
   webhook payload selects nothing.
 - The config deploy key is read-only.
-- A ruleset on `dorothy-config` `main` blocks force pushes and deletion.
+- Where available, a ruleset on `dorothy-config` `main` blocks force pushes
+  and deletion.
 - The GitHub account uses a passkey or hardware second factor, and holds no
   classic personal access tokens with repository scope.
 
@@ -257,7 +247,7 @@ tunnel used to reach other services.
 **Mitigation.**
 
 - HMAC-SHA256 over the raw body bytes, before parsing, compared with
-  `timingSafeEqual`.
+  `timingSafeEqual`; `application/json` only.
 - Replays are harmless: a delivery only triggers a fetch, and an unchanged
   `origin/main` stops the apply.
 - 1 MiB body cap; `headersTimeout` 10 s, `requestTimeout` 15 s,
@@ -266,14 +256,13 @@ tunnel used to reach other services.
 - Tunnel ingress: the webhook hostname to `http://hermes:9000`, then a
   catch-all `http_status:404`.
 - Cloudflare custom rule: block requests to the webhook hostname unless the
-  method is `POST` and the path `/github`. Cloudflare rate limiting rule:
-  30 requests per minute per IP.
-- The webhook secret is 32 random bytes. It is readable by `hermes`
-  (the webhook runs as `hermes`), which is accepted: holding it only lets the
-  agent trigger redundant fetches.
+  method is `POST` and the path `/github`. Cloudflare rate limiting rule
+  (the Free plan's 10-second window): 10 requests per 10 seconds per IP.
+- The webhook secret is 32 random bytes. It lives in `hermes`, so the agent
+  can read it (S4); holding it only triggers redundant fetches.
 
-**Verification.** Unit: signatures, cap, timeouts, collapsing (deployment
-design). The Cloudflare rules are recorded in the ops checklist.
+**Verification.** Unit tests in the deployment design. The Cloudflare rules
+are recorded in the operator checklist.
 
 ### S9. Local services exposed
 
@@ -281,27 +270,30 @@ design). The Cloudflare rules are recorded in the ops checklist.
 reachable from outside the compose network.
 
 **Mitigation.** No service declares `ports`. The tunnel routes only the
-webhook hostname. Upstream binds the dashboard to loopback by default and this
-deployment does not override it. The API server is enabled only in the smoke
-fixture; enabling it in production would require `API_SERVER_KEY` and its own
-review.
+webhook hostname. The dashboard runs only when `HERMES_DASHBOARD` is set,
+which this deployment never does. The API server is enabled only in the
+smoke fixture; enabling it in production would require `API_SERVER_KEY` and
+its own review. The sidecar listens on nothing.
 
 **Verification.** Smoke: `docker compose config --format json` shows no
 `ports` on any service.
 
 ### S10. Container escape and resource exhaustion
 
-**Mitigation.** The `hermes` service sets:
+Because the agent is root in `hermes` (S4), this is the boundary that
+matters most.
+
+**Mitigation.** `hermes` sets:
 
 - `security_opt: [no-new-privileges:true]`
-- `cap_drop: [ALL]` and `cap_add` only what s6 and the stubs need to change
-  ownership and drop privileges: initially `CHOWN`, `DAC_OVERRIDE`, `FOWNER`,
-  `SETUID`, `SETGID`, `KILL`, narrowed by the smoke test
-- `pids_limit: 512` and `mem_limit: 4g`
+- `cap_drop: [ALL]` and `cap_add` only what s6 and upstream's hooks need:
+  initially `CHOWN`, `DAC_OVERRIDE`, `FOWNER`, `SETUID`, `SETGID`, `KILL`,
+  narrowed by the smoke test. Never `SYS_ADMIN`.
+- `tmpfs: /run:exec`, `pids_limit: 512`, `mem_limit: 4g`
 - no `privileged`, Docker socket, host namespaces or devices
 
-`cloudflared` sets `read_only: true`, `cap_drop: [ALL]` and
-`no-new-privileges`.
+`dorothy-sync` and `cloudflared` set `read_only: true`, `cap_drop: [ALL]` and
+`no-new-privileges`, with tmpfs where they write.
 
 **Accepted.** A read-only root filesystem for `hermes`: the agent and its
 skills install packages and write caches at runtime, and upstream does not
@@ -311,8 +303,11 @@ support it.
 
 ### S11. Host access
 
-**Mitigation** (ops checklist):
+**Mitigation** (operator checklist):
 
+- Docker with `userns-remap` (or rootless Docker), so root in a container is
+  an unprivileged user on the host. Implementation confirms upstream's s6
+  boot works under it; if not, this item moves to Accepted.
 - No inbound ports at all. SSH goes through Cloudflare Access
   (`cloudflared access ssh`) or Tailscale; the host firewall denies all
   inbound traffic. Docker-published ports bypass host firewalls, which S9
@@ -328,14 +323,13 @@ repository, not the server. See Secret rotation.
 
 ### S12. Exfiltration and credential misuse (accepted)
 
-The agent has unrestricted egress, and its own process holds the LLM
-credential and platform tokens. Upstream strips them from shell subprocesses,
-which reduces accidents, not attacks. Blast radius is limited instead:
+The agent has unrestricted egress and holds the LLM credential and platform
+tokens. Upstream strips them from shell subprocesses, which reduces
+accidents, not attacks. Blast radius is limited instead:
 
 - A dedicated LLM API key with a spend limit, revocable independently.
 - Platform bots dedicated to Dorothy.
-- No other credentials in the container: no cloud keys, no personal GitHub
-  token.
+- No other credentials in `hermes`: no cloud keys, no personal GitHub token.
 
 Not adopted: an egress allowlist proxy (a sidecar, or NVIDIA OpenShell as
 upstream suggests). Revisit if Dorothy is given inbound email or other
@@ -343,36 +337,43 @@ unattended untrusted input.
 
 ### S13. Memory poisoning (accepted, recoverable)
 
-Injected text can make the agent write harmful memories or skills, which sync
-and survive rebuilds. Writing memory is the agent's job, so this cannot be
-prevented, only reversed. S1's ruleset keeps every version, and each sync
-commit body says what changed. Skills deserve the closest review: they are
-instructions and scripts the agent will later follow.
+Injected text can make the agent write harmful memories, skills or scheduled
+jobs, which sync and survive rebuilds. Writing memory is the agent's job, so
+this cannot be prevented, only reversed. The sidecar never rewrites history,
+and each sync commit body says what changed. Skills and scheduled jobs
+deserve the closest review: the agent later acts on them unprompted.
+
+The sidecar refuses a bundle that would delete `sessions/state.sql` or
+`memories/MEMORY.md` unless `DOROTHY_ALLOW_EMPTY=1`, so neither a failed
+restore nor the agent can silently empty the repository.
 
 Recovery: revert the bad commits in `dorothy-memory`, then
 `docker compose down`, remove the `hermes-data` and `dorothy-state` volumes,
 and `mise run up` for a cold boot from the reverted head.
 
-Status files under `/opt/data/dorothy` are agent-writable, so the health check
-is an operational signal, not a security control.
+Status files and health checks in `hermes` are agent-writable: they are
+operational signals, not security controls.
 
 ### S14. Supply chain
 
-- Both images are pinned by digest and change only through a Dependabot pull
-  request whose smoke test passes, after reading upstream's release notes and
-  security advisories.
+- Both service images are pinned by digest and change only through a
+  Dependabot pull request whose smoke test passes, after reading upstream's
+  release notes and security advisories.
 - Runtime code imports only `node:*`. Development tooling is pinned by mise
   and the lockfile and never ships to the server.
 - GitHub Actions are pinned by commit SHA. Dependabot pull requests run
   without repository secrets, and the smoke test needs none.
-- Third-party skills from the Hermes hub load into the agent process (upstream
-  §2.3) and are installed only after reading them.
+- Third-party skills from the Hermes hub load into the agent process and are
+  installed only after reading them.
 
-### S15. Git transport
+### S15. Git transport and configuration
 
-Pinned `known_hosts` with `StrictHostKeyChecking=yes` and `IdentitiesOnly`;
-git runs through `execFile`, never a shell; repository URLs come only from
-settings.
+- Pinned `known_hosts` with `StrictHostKeyChecking=yes` and `IdentitiesOnly`.
+- `/usr/bin/ssh -F none`, so no user or system ssh configuration applies.
+- In the sidecar, `GIT_CONFIG_GLOBAL=/dev/null` and `GIT_CONFIG_NOSYSTEM=1`,
+  an explicit `PATH`, and a working directory inside its own checkout.
+- git runs through `execFile`, never a shell; repository URLs come only from
+  settings.
 
 ## Secret rotation
 
@@ -391,16 +392,14 @@ S13.
 
 ## Smoke test additions
 
-Collected from the verification notes above, run as `hermes` via
-`docker compose exec -u hermes` unless stated:
+Collected from the verification notes above:
 
-1. The private key directory and key are unreadable (S1).
-2. The scrubbed variables are absent from `container_environment` and the
-   gateway's environment (S1).
-3. A root-owned bundle is rejected and nothing is pushed (S2).
-4. Nothing under `/var/lib/dorothy` can be created, renamed or deleted (S3).
-5. A pre-planted `/opt/data/dorothy` symlink leaves its target unchanged
-   (S4).
-6. A fixture session containing a fake token is pushed redacted (S5).
-7. A platform token without an allowlist stops the container (S6).
-8. No service publishes ports (S9).
+1. The memory key is absent from `hermes`: inspect, `/run/secrets`, process
+   environments (S1).
+2. A symlinked bundle is rejected and nothing is pushed (S2).
+3. Root in `hermes` cannot write the restore volume or reach the sidecar
+   (S3).
+4. A fixture session containing a fake token is pushed redacted (S5).
+5. A platform token without an allowlist stops the container (S6).
+6. No service publishes ports (S9).
+7. All three services run hardened, unmodified (S10).
