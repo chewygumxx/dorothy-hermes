@@ -1,0 +1,127 @@
+{
+    "extraAllowVariables": [
+        "DISCORD_ALLOWED_ROLES",
+        "DISCORD_ALLOW_BOTS",
+        "FEISHU_ALLOW_BOTS",
+        "QQ_GROUP_ALLOWED_USERS",
+        "SLACK_ALLOW_BOTS",
+        "TELEGRAM_ALLOW_BOTS",
+        "TELEGRAM_GROUP_ALLOWED_CHATS",
+        "TELEGRAM_GROUP_ALLOWED_USERS"
+    ],
+    "globalAllowAll": "GATEWAY_ALLOW_ALL_USERS",
+    "globalAllowlist": "GATEWAY_ALLOWED_USERS",
+    "platforms": {
+        "bluebubbles": {
+            "allowAllUsers": "BLUEBUBBLES_ALLOW_ALL_USERS",
+            "allowedUsers": "BLUEBUBBLES_ALLOWED_USERS",
+            "enabledBy": ["BLUEBUBBLES_PASSWORD", "BLUEBUBBLES_SERVER_URL"]
+        },
+        "dingtalk": {
+            "allowAllUsers": "DINGTALK_ALLOW_ALL_USERS",
+            "allowedUsers": "DINGTALK_ALLOWED_USERS",
+            "enabledBy": ["DINGTALK_CLIENT_ID", "DINGTALK_CLIENT_SECRET"]
+        },
+        "discord": {
+            "allowAllUsers": "DISCORD_ALLOW_ALL_USERS",
+            "allowedUsers": "DISCORD_ALLOWED_USERS",
+            "enabledBy": ["DISCORD_BOT_TOKEN"]
+        },
+        "email": {
+            "allowAllUsers": "EMAIL_ALLOW_ALL_USERS",
+            "allowedUsers": "EMAIL_ALLOWED_USERS",
+            "enabledBy": [
+                "EMAIL_ADDRESS",
+                "EMAIL_IMAP_HOST",
+                "EMAIL_PASSWORD",
+                "EMAIL_SMTP_HOST"
+            ]
+        },
+        "feishu": {
+            "allowAllUsers": "FEISHU_ALLOW_ALL_USERS",
+            "allowedUsers": "FEISHU_ALLOWED_USERS",
+            "enabledBy": ["FEISHU_APP_ID", "FEISHU_APP_SECRET"]
+        },
+        "homeassistant": {
+            "allowAllUsers": "",
+            "allowedUsers": "",
+            "enabledBy": ["HASS_TOKEN"]
+        },
+        "matrix": {
+            "allowAllUsers": "MATRIX_ALLOW_ALL_USERS",
+            "allowedUsers": "MATRIX_ALLOWED_USERS",
+            "enabledBy": ["MATRIX_ACCESS_TOKEN", "MATRIX_PASSWORD"]
+        },
+        "mattermost": {
+            "allowAllUsers": "MATTERMOST_ALLOW_ALL_USERS",
+            "allowedUsers": "MATTERMOST_ALLOWED_USERS",
+            "enabledBy": ["MATTERMOST_TOKEN"]
+        },
+        "qqbot": {
+            "allowAllUsers": "QQ_ALLOW_ALL_USERS",
+            "allowedUsers": "QQ_ALLOWED_USERS",
+            "enabledBy": ["QQ_APP_ID", "QQ_CLIENT_SECRET"]
+        },
+        "relay": {
+            "allowAllUsers": "",
+            "allowedUsers": "",
+            "enabledBy": ["GATEWAY_RELAY_URL"]
+        },
+        "signal": {
+            "allowAllUsers": "SIGNAL_ALLOW_ALL_USERS",
+            "allowedUsers": "SIGNAL_ALLOWED_USERS",
+            "enabledBy": ["SIGNAL_HTTP_URL"]
+        },
+        "slack": {
+            "allowAllUsers": "SLACK_ALLOW_ALL_USERS",
+            "allowedUsers": "SLACK_ALLOWED_USERS",
+            "enabledBy": ["SLACK_BOT_TOKEN"]
+        },
+        "sms": {
+            "allowAllUsers": "SMS_ALLOW_ALL_USERS",
+            "allowedUsers": "SMS_ALLOWED_USERS",
+            "enabledBy": ["TWILIO_ACCOUNT_SID"]
+        },
+        "telegram": {
+            "allowAllUsers": "TELEGRAM_ALLOW_ALL_USERS",
+            "allowedUsers": "TELEGRAM_ALLOWED_USERS",
+            "enabledBy": ["TELEGRAM_BOT_TOKEN"]
+        },
+        "wecom": {
+            "allowAllUsers": "WECOM_ALLOW_ALL_USERS",
+            "allowedUsers": "WECOM_ALLOWED_USERS",
+            "enabledBy": ["WECOM_BOT_ID", "WECOM_SECRET"]
+        },
+        "wecom_callback": {
+            "allowAllUsers": "WECOM_CALLBACK_ALLOW_ALL_USERS",
+            "allowedUsers": "WECOM_CALLBACK_ALLOWED_USERS",
+            "enabledBy": [
+                "WECOM_CALLBACK_CORP_ID",
+                "WECOM_CALLBACK_CORP_SECRET"
+            ]
+        },
+        "weixin": {
+            "allowAllUsers": "WEIXIN_ALLOW_ALL_USERS",
+            "allowedUsers": "WEIXIN_ALLOWED_USERS",
+            "enabledBy": ["WEIXIN_ACCOUNT_ID", "WEIXIN_TOKEN"]
+        },
+        "whatsapp": {
+            "allowAllUsers": "WHATSAPP_ALLOW_ALL_USERS",
+            "allowedUsers": "WHATSAPP_ALLOWED_USERS",
+            "enabledBy": ["WHATSAPP_ENABLED"]
+        },
+        "whatsapp_cloud": {
+            "allowAllUsers": "WHATSAPP_CLOUD_ALLOW_ALL_USERS",
+            "allowedUsers": "WHATSAPP_CLOUD_ALLOWED_USERS",
+            "enabledBy": [
+                "WHATSAPP_CLOUD_ACCESS_TOKEN",
+                "WHATSAPP_CLOUD_PHONE_NUMBER_ID"
+            ]
+        },
+        "yuanbao": {
+            "allowAllUsers": "YUANBAO_ALLOW_ALL_USERS",
+            "allowedUsers": "YUANBAO_ALLOWED_USERS",
+            "enabledBy": ["YUANBAO_APP_ID", "YUANBAO_APP_SECRET"]
+        }
+    }
+}

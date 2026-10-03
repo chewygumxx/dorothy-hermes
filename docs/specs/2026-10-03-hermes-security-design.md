@@ -337,6 +337,11 @@ support it.
 **Accepted.** Host compromise exposes every secret: dotenvx protects the
 repository, not the server. See Secret rotation.
 
+**Accepted.** The repository is public, so the encrypted `.env` is published,
+and git history keeps every version of it. Anyone who obtains `.env.keys`, now
+or later, can decrypt every secret ever committed. Its exposure therefore
+means rotating every secret, not only re-encrypting `.env`.
+
 ### S12. Exfiltration and credential misuse (accepted)
 
 The agent has unrestricted egress and holds the LLM credential and platform
@@ -404,7 +409,7 @@ operational signals, not security controls.
 | Deploy key            | New key pair; add on GitHub; remove the old key; then as above |
 | Webhook secret        | Update the GitHub webhook and `.env` together                  |
 | `TUNNEL_TOKEN`        | Refresh in the Cloudflare dashboard, then as above             |
-| `DOTENV_PRIVATE_KEY`  | Re-encrypt `.env` under a new key pair; replace `.env.keys`    |
+| `DOTENV_PRIVATE_KEY`  | Rotate every secret above; re-encrypt under a new key pair     |
 
 Suspected compromise: stop the stack, rotate every secret, review both
 repositories' history since the last known-good commit, and recover as in

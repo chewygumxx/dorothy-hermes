@@ -1,0 +1,23 @@
+#!/command/with-contenv sh
+# vim:set expandtab shiftwidth=4 filetype=sh:
+# SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/hermes/cont-init.d/005-dorothy-bootstrap
+#
+#
+
+# shellcheck shell=sh
+# Sorts before upstream's 01-hermes-setup, so it finds our SOUL.md and
+# config.yaml in place. A failure stops the container
+# (S6_BEHAVIOUR_IF_STAGE2_FAILS=2). Absolute paths: upstream puts the
+# agent-writable /opt/data/.local/bin on PATH. chmod precedes chown: root
+# changing the mode of a file it no longer owns would need CAP_FOWNER.
+set -eu
+export HOME=/opt/data
+/bin/mkdir -p /run/dorothy
+/bin/chmod 0700 /run/dorothy
+/bin/chown hermes:hermes /run/dorothy
+exec /command/s6-setuidgid hermes /usr/local/bin/node /opt/dorothy/src/bootstrap.ts

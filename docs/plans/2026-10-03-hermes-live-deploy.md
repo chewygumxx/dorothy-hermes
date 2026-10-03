@@ -69,6 +69,11 @@ Deliberate departures from the spec, each folded back into it in Task 18:
   `snapshot.ts --once`.
 - `DOROTHY_HOST` names the server in sync commit messages; the container's
   own hostname is meaningless.
+- The sidecar records the last consumed bundle hash in `state/consumed`, and
+  bootstrap marks each container start in `<run>/booted`.
+- `dorothy-sync` gets `mem_limit: 1g` and `pids_limit: 128`, which the spec
+  leaves unset; Task 17 measures whether 1 GB suffices.
+- `mise run up` waits for health (`compose up --wait`).
 - The S15 ssh command gains `ConnectTimeout` and `ServerAlive*` options, and
   git has no overall timeout: a first clone of a long memory history must
   not be killed, while a stalled connection still ends.
@@ -2922,7 +2927,7 @@ git commit -m "feat: Read and write trees without following links"
   `interface GitOptions { keyPath?; knownHostsPath?; env?: NodeJS.ProcessEnv; timeoutMs?: number; signal?: AbortSignal }`;
   `sshCommand(keyPath: string, knownHostsPath: string): string`;
   `type PushResult = "pushed" | "rejected" | "failed"`;
-  `class Git { readonly dir: string; constructor(dir, options?); run(args, cwd?): Promise<string>; clone(url): Promise<void>; head(): Promise<string | null>; remoteHead(): Promise<string | null>; fetch(): Promise<void>; isAncestor(a, b): Promise<boolean>; resetHard(ref): Promise<void>; unpushed(): Promise<number>; addAll(): Promise<void>; stagedPaths(): Promise<string[]>; commit(message): Promise<void>; push(): Promise<PushResult>; setRemote(url): Promise<void> }`.
+  `class Git { readonly dir: string; constructor(dir, options?); run(args, cwd?): Promise<string>; clone(url): Promise<void>; head(): Promise<string | null>; remoteHead(): Promise<string | null>; fetch(): Promise<void>; isAncestor(a, b): Promise<boolean>; resetHard(ref): Promise<void>; unpushed(): Promise<number>; addAll(): Promise<void>; clean(): Promise<void>; stagedPaths(): Promise<string[]>; commit(message): Promise<void>; push(): Promise<PushResult>; setRemote(url): Promise<void> }`.
 - Produces (`test-helpers.ts`): `GIT_ENV`; `git(args: string[], cwd: string): string`;
   `bareRepo(t): string` (a `file://` URL); `pushFiles(t, url, files, message?): string`;
   `remoteMain(url): string | null`; `remoteShow(url, path): string | null`.
@@ -3232,6 +3237,11 @@ export class Git {
 
     async addAll(): Promise<void> {
         await this.run(["add", "--all"]);
+    }
+
+    /** Removes every untracked file, ignored ones included. */
+    async clean(): Promise<void> {
+        await this.run(["clean", "-f", "-f", "-d", "-x", "--quiet"]);
     }
 
     async stagedPaths(): Promise<string[]> {
@@ -5144,6 +5154,39 @@ test("unpushed commits survive an outage; a moved remote is never forced", async
     assert.equal(remoteMain(url), human);
 });
 
+test("a refused bundle does not hold back an earlier commit's push", async (t) => {
+    const url = bareRepo(t);
+    const bare = url.slice("file://".length);
+    const { sidecar, paths, deps } = await started(t, url);
+    outbox(paths, sidecar.generation, FULL);
+    await sidecar.cycle();
+    renameSync(bare, `${bare}.away`);
+    outbox(paths, sidecar.generation, { ...FULL, "memories/MEMORY.md": "m2" });
+    await sidecar.cycle();
+    assert.equal(statusOf(paths)?.pendingCommits, 1);
+    // Without MEMORY.md, the empty-state guard refuses the next bundle.
+    outbox(paths, sidecar.generation, { "sessions/state.sql": "SQL 2" });
+    renameSync(`${bare}.away`, bare);
+    await deps.sleep(3_600_000);
+    await sidecar.cycle();
+    assert.equal(statusOf(paths)?.pendingCommits, 0);
+    assert.equal(remoteShow(url, "memories/MEMORY.md"), "m2");
+    assert.match(statusOf(paths)?.lastError ?? "", /refusing a bundle without memories\/MEMORY\.md/);
+});
+
+test("a crash mid-mirror is undone at startup", async (t) => {
+    const url = bareRepo(t);
+    const { sidecar, paths, dir } = await started(t, url);
+    outbox(paths, sidecar.generation, FULL);
+    await sidecar.cycle();
+    writeFileSync(join(paths.checkout, "memories/MEMORY.md"), "half");
+    writeFileSync(join(paths.checkout, "memories/STRAY.md"), "stray");
+    await started(t, url, {}, dir);
+    const files = restoreOf(paths)?.files ?? [];
+    assert.equal(files.find((f) => f.path === "memories/MEMORY.md")?.content, "m1");
+    assert.equal(files.some((f) => f.path === "memories/STRAY.md"), false);
+});
+
 test("a stale index.lock is removed at startup", async (t) => {
     const url = bareRepo(t);
     const { paths, dir } = await started(t, url);
@@ -5336,6 +5379,11 @@ export class Sidecar {
         writeFileAtomic(paths.key, settings.memoryKey, 0o600);
         rmSync(join(paths.checkout, ".git/index.lock"), { force: true });
         if (existsSync(join(paths.checkout, ".git"))) {
+            // A crash mid-mirror leaves a half-written tree that restore.json
+            // must not serve. Nothing is lost: consumed is recorded only after
+            // the commit, so the outbox bundle is mirrored again.
+            if ((await this.#git.head()) !== null) await this.#git.resetHard("HEAD");
+            await this.#git.clean();
             await this.#git.setRemote(settings.memoryRepo);
             this.#generation = readTrimmed(paths.generation) ?? this.#mint();
             this.#consumed = readTrimmed(paths.consumed);
@@ -5368,14 +5416,24 @@ export class Sidecar {
     async cycle(): Promise<void> {
         this.status.loopAt = iso(this.#deps.now());
         this.#save();
-        let failed = false;
-        try {
-            await this.#publish();
-            await this.#pushIfDue();
-        } catch (error) {
-            failed = true;
-            this.status.lastError = errorMessage(error);
-            this.#deps.log(`publish failed: ${this.status.lastError}`);
+        // Separate attempts: a refused bundle must not hold back earlier commits.
+        const errors: string[] = [];
+        for (const [step, attempt] of [
+            ["publish", () => this.#publish()],
+            ["push", () => this.#pushIfDue()],
+        ] as const) {
+            try {
+                await attempt();
+            } catch (error) {
+                errors.push(`${step} failed: ${errorMessage(error)}`);
+            }
+        }
+        const failed = errors.length > 0;
+        if (failed) {
+            const lastError = errors.join("; ");
+            // A refused bundle is read again every cycle; log it once.
+            if (lastError !== this.status.lastError) this.#deps.log(lastError);
+            this.status.lastError = lastError;
         }
         try {
             this.status.pendingCommits = await this.#git.unpushed();
@@ -5551,14 +5609,14 @@ drops.
 - [ ] **Step 4: Run the tests**
 
 Run: `mise exec -- node --test hermes/src/sidecar.test.ts`
-Expected: 14 pass.
+Expected: 17 pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 bunx biome check --write hermes/src && bun run typecheck
 git add hermes/src/sidecar.ts hermes/src/sidecar.test.ts
-git commit -m "feat: Publish bundles from the dorothy-sync sidecar"
+git commit -m "feat: Publish bundles from the sync sidecar"
 ```
 
 ---
@@ -5906,7 +5964,12 @@ services:
         <<: *hardening
         image: nousresearch/hermes-agent:v2026.9.24@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
         user: "0:0"
-        entrypoint: ["/bin/chown", "10000:10000", "/v/outbox", "/v/restore", "/v/state"]
+        entrypoint:
+            - /bin/chown
+            - 10000:10000
+            - /v/outbox
+            - /v/restore
+            - /v/state
         cap_add:
             - CHOWN
         read_only: true
@@ -5958,7 +6021,10 @@ services:
         stop_grace_period: 60s
         restart: unless-stopped
         healthcheck:
-            test: ["CMD", "/usr/local/bin/node", "/opt/dorothy/src/sidecar-health.ts"]
+            test:
+                - CMD
+                - /usr/local/bin/node
+                - /opt/dorothy/src/sidecar-health.ts
             interval: 30s
             timeout: 10s
             retries: 3
@@ -6011,7 +6077,12 @@ services:
         stop_grace_period: 90s
         restart: unless-stopped
         healthcheck:
-            test: ["CMD", "/command/s6-setuidgid", "hermes", "/usr/local/bin/node", "/opt/dorothy/src/health.ts"]
+            test:
+                - CMD
+                - /command/s6-setuidgid
+                - hermes
+                - /usr/local/bin/node
+                - /opt/dorothy/src/health.ts
             interval: 60s
             timeout: 20s
             retries: 3
@@ -6034,10 +6105,12 @@ token and allowlist variables from `hermes/src/platforms.json` instead.
 
 - [ ] **Step 9: Validate and commit**
 
+The lint scripts list files with `git ls-files`, so stage first:
+
 ```bash
 DOROTHY_MEMORY_DEPLOY_KEY=x DOROTHY_CONFIG_DEPLOY_KEY=x docker compose config --quiet
-bun run lint:yaml
 git add hermes/known_hosts hermes/cont-init.d hermes/cont-finish.d hermes/s6-rc.d compose.yaml
+bun run lint:yaml
 git commit -m "feat: Add the compose stack and s6 stubs"
 ```
 
@@ -6115,7 +6188,7 @@ import { readdirSync } from "node:fs";
 import { join } from "node:path";
 import { checkTables, dumpDatabase } from "/opt/dorothy/src/dump.ts";
 
-const home = process.argv[2] ?? "/work/home";
+const home = process.argv[2] ?? "/opt/data";
 const snapshots = join(home, "state-snapshots");
 const latest = readdirSync(snapshots).filter((name) => name.endsWith("-fixture")).sort().at(-1);
 if (!latest) throw new Error(`no fixture snapshot in ${snapshots}`);
@@ -6140,17 +6213,20 @@ set -eu
 root=$(cd "$(dirname "$0")/.." && pwd)
 image=${FIXTURE_IMAGE:-nousresearch/hermes-agent:v2026.9.21@sha256:6bece0644e29a347e5ae17db43c36938c86f171c6f5e0cef18aa2075d331f3a3}
 work=$(mktemp -d)
-chmod 0777 "$work"
+mkdir "$work/home"
+chmod 0777 "$work" "$work/home"
 trap 'docker run --rm -v "$work:/work" --entrypoint /bin/rm "$image" -rf /work/home; rm -rf "$work"' EXIT
 
+# The home is mounted at the image's own HERMES_HOME: pointing HERMES_HOME
+# elsewhere makes upstream reinstall its dependencies there.
 run() {
-    docker run --rm -u 10000:10000 -e HERMES_HOME=/work/home -e HOME=/work \
-        -v "$work:/work" -v "$root/smoke:/smoke:ro" -v "$root/hermes/src:/opt/dorothy/src:ro" "$@"
+    docker run --rm -u 10000:10000 -e HOME=/work \
+        -v "$work/home:/opt/data" -v "$root/smoke:/smoke:ro" -v "$root/hermes/src:/opt/dorothy/src:ro" "$@"
 }
 
 run --entrypoint /opt/hermes/bin/hermes "$image" sessions import --from claude /smoke/fixture-session.jsonl
 run --entrypoint /opt/hermes/bin/hermes "$image" backup --quick --label fixture
-run --entrypoint /usr/local/bin/node "$image" /smoke/dump-fixture.mts /work/home \
+run --entrypoint /usr/local/bin/node "$image" /smoke/dump-fixture.mts /opt/data \
     > "$root/smoke/fixtures/memory/sessions/state.sql"
 echo "wrote smoke/fixtures/memory/sessions/state.sql from $image"
 ```
@@ -6318,6 +6394,8 @@ config_commit() {
 }
 snapshot_once() { compose exec -T -u hermes hermes /usr/local/bin/node /opt/dorothy/src/snapshot.ts --once; }
 in_hermes() { compose exec -T hermes "$@"; }
+as_hermes() { compose exec -T -u hermes hermes "$@"; }
+sync_error_has() { in_hermes cat /var/lib/dorothy/restore/status.json | jq -r '.lastError // ""' | grep -q "$1"; }
 memory_moved() { [ "$(memory_head)" != "$1" ]; }
 # wait_for <seconds> <command...>
 wait_for() {
@@ -6371,10 +6449,18 @@ compose exec -T -u hermes hermes /opt/hermes/.venv/bin/python /smoke/search.py z
 say "S1: the memory key is absent from hermes"
 docker inspect "$(compose ps -q hermes)" --format '{{json .Config.Env}}' | grep -q DOROTHY_MEMORY_DEPLOY_KEY &&
     fail "hermes has DOROTHY_MEMORY_DEPLOY_KEY in its environment"
+# Both forms: a decoded key line, and a slice of the base64 value past the
+# PEM header (which every key, including the config key, shares). Searched
+# as root and as hermes: root lacks CAP_SYS_PTRACE, so it cannot read the
+# environ files of hermes's processes.
 key_line=$(sed -n 2p "$work/memory_key")
-if in_hermes sh -c "grep -rlsF -e '$key_line' /proc/[0-9]*/environ /opt/data /run /tmp /var/lib/dorothy"; then
-    fail "the memory key is readable inside hermes"
-fi
+key_b64=$(printf '%s' "$DOROTHY_MEMORY_DEPLOY_KEY" | cut -c 101-160)
+for user in root hermes; do
+    if compose exec -T -u "$user" hermes sh -c \
+        "grep -rlsF -e '$key_line' -e '$key_b64' /proc/[0-9]*/environ /opt/data /run /tmp /var/lib/dorothy"; then
+        fail "the memory key is readable inside hermes (as $user)"
+    fi
+done
 
 say "S3: root in hermes cannot write the restore volume or reach the sidecar"
 if in_hermes touch /var/lib/dorothy/restore/probe 2> /dev/null; then fail "the restore volume is writable from hermes"; fi
@@ -6421,18 +6507,29 @@ config_commit "fixed config" > /dev/null
 snapshot_once || fail "snapshot --once failed"
 
 say "S2: symlinked and FIFO bundles are rejected"
+# The snapshot loop would replace the planted file within an interval, so it
+# pauses; the hostile files are planted as the agent would, as hermes.
+in_hermes /command/s6-rc -d change dorothy-snapshot || fail "could not pause dorothy-snapshot"
 head=$(memory_head)
-in_hermes sh -c 'ln -sfn /tmp/dorothy/memory.key /var/lib/dorothy/outbox/bundle.json'
-sleep 40
-in_hermes cat /var/lib/dorothy/restore/status.json | jq -r .lastError | grep -q 'symbolic link' ||
-    fail "the symlinked bundle was not rejected"
-in_hermes sh -c 'rm -f /var/lib/dorothy/outbox/bundle.json && mkfifo /var/lib/dorothy/outbox/bundle.json'
-sleep 40
-in_hermes cat /var/lib/dorothy/restore/status.json | jq -r .lastError | grep -q 'not a regular file' ||
-    fail "the FIFO bundle was not rejected"
+as_hermes sh -c 'ln -sfn /tmp/dorothy/memory.key /var/lib/dorothy/outbox/bundle.json' ||
+    fail "hermes could not plant a symlink"
+wait_for 90 sync_error_has 'symbolic link' || fail "the symlinked bundle was not rejected"
+as_hermes sh -c 'rm -f /var/lib/dorothy/outbox/bundle.json && mkfifo /var/lib/dorothy/outbox/bundle.json' ||
+    fail "hermes could not plant a FIFO"
+wait_for 90 sync_error_has 'not a regular file' || fail "the FIFO bundle was not rejected"
 [ "$(memory_head)" = "$head" ] || fail "something was pushed from a hostile bundle"
-in_hermes rm -f /var/lib/dorothy/outbox/bundle.json
+as_hermes rm -f /var/lib/dorothy/outbox/bundle.json
+in_hermes /command/s6-rc -u change dorothy-snapshot || fail "could not resume dorothy-snapshot"
 snapshot_once || fail "snapshot --once failed"
+
+say "final snapshot and warm boot: a stop publishes, a restart restores nothing"
+as_hermes sh -c 'printf "final\n" > /opt/data/memories/FINAL.md'
+marker=$(in_hermes cat /opt/data/dorothy/restored)
+compose stop || fail "the stack did not stop"
+memory_show memories/FINAL.md | grep -q final || fail "the final snapshot did not reach dorothy-memory"
+compose up -d --wait --wait-timeout 600 || fail "the warm boot did not become healthy"
+[ "$(in_hermes cat /opt/data/dorothy/restored)" = "$marker" ] || fail "the warm boot restored again"
+in_hermes test -f /opt/data/memories/FINAL.md || fail "the warm boot lost memories/FINAL.md"
 
 say "step 5: a first boot against an empty memory repository seeds main"
 compose down --volumes
@@ -6524,7 +6621,12 @@ Any Linux VM with at least 2 vCPU, 4 GB RAM and 20 GB disk. On it:
 
 - [ ] **Step 2: Create the repositories, keys and rulesets (S1, S7)**
 
-With the user's go-ahead:
+First the account controls S7 assumes. The user confirms, and the run record
+notes, that the account's second factor is a passkey or hardware key, and that
+<https://github.com/settings/tokens> lists no classic personal access token
+(fine-grained tokens are reviewed for scope and expiry).
+
+Then, with the user's go-ahead:
 
 ```bash
 gh repo create chewygumxx/dorothy-config --private
@@ -6536,12 +6638,24 @@ for repo in dorothy-config dorothy-memory; do
  "rules": [{"type": "deletion"}, {"type": "non_fast_forward"}]}
 JSON
 done
-cd "$(mktemp -d)"
-ssh-keygen -q -t ed25519 -N '' -C dorothy-config -f config_key
-ssh-keygen -q -t ed25519 -N '' -C dorothy-memory -f memory_key
-gh repo deploy-key add config_key.pub --repo chewygumxx/dorothy-config --title dorothy-server
-gh repo deploy-key add memory_key.pub --repo chewygumxx/dorothy-memory --title dorothy-sync --allow-write
+keydir=$(mktemp -d)   # mode 0700; Step 4 reads the keys from here
+ssh-keygen -q -t ed25519 -N '' -C dorothy-config -f "$keydir/config_key"
+ssh-keygen -q -t ed25519 -N '' -C dorothy-memory -f "$keydir/memory_key"
+gh repo deploy-key add "$keydir/config_key.pub" --repo chewygumxx/dorothy-config --title dorothy-server
+gh repo deploy-key add "$keydir/memory_key.pub" --repo chewygumxx/dorothy-memory --title dorothy-sync --allow-write
 ```
+
+Verify each ruleset is active with no bypass actors, and record the output:
+
+```bash
+for repo in dorothy-config dorothy-memory; do
+  gh api "repos/chewygumxx/$repo/rulesets" --jq '.[] | .id' | while read -r id; do
+    gh api "repos/chewygumxx/$repo/rulesets/$id" --jq '{name, enforcement, bypass_actors}'
+  done
+done
+```
+
+Expected: each prints `"enforcement": "active"` and `"bypass_actors": []`.
 
 `dorothy-memory` must stay empty until the sidecar's first push: a README
 commit gives it a head without `sessions/state.sql`, which fails startup.
@@ -6563,25 +6677,35 @@ Push both to `dorothy-config` `main`.
 
 - [ ] **Step 4: Encrypt the secrets into `.env`**
 
-The user runs each `dotenvx set` (the values are theirs; nothing is pasted
-into this session). Use a dedicated LLM key with a spend limit (S12) and a
-Telegram bot made for Dorothy:
+The user runs each `dotenvx set` in the repository, in the same shell as
+Step 2 (the values are theirs; nothing is pasted into this session). Use a
+dedicated LLM key with a spend limit (S12) and a Telegram bot made for
+Dorothy. Secrets are read without echo, so they never reach shell history:
 
 ```bash
-dotenvx set DOROTHY_CONFIG_DEPLOY_KEY "$(base64 -w0 config_key)"
-dotenvx set DOROTHY_MEMORY_DEPLOY_KEY "$(base64 -w0 memory_key)"
-dotenvx set ANTHROPIC_API_KEY ...
-dotenvx set TELEGRAM_BOT_TOKEN ...
+dotenvx set DOROTHY_CONFIG_DEPLOY_KEY "$(base64 -w0 "$keydir/config_key")"
+dotenvx set DOROTHY_MEMORY_DEPLOY_KEY "$(base64 -w0 "$keydir/memory_key")"
+for name in ANTHROPIC_API_KEY TELEGRAM_BOT_TOKEN; do
+  printf '%s: ' "$name"; read -rs v; echo; dotenvx set "$name" "$v"; unset v
+done
 dotenvx set TELEGRAM_ALLOWED_USERS <your numeric Telegram id>
-shred -u config_key memory_key
+for name in DOROTHY_CONFIG_DEPLOY_KEY DOROTHY_MEMORY_DEPLOY_KEY ANTHROPIC_API_KEY TELEGRAM_BOT_TOKEN; do
+  [ "$(dotenvx get "$name" | wc -c)" -gt 1 ] || echo "EMPTY: $name"
+done
+shred -u "$keydir"/*_key && rm -r "$keydir"
 ```
+
+Expected: no `EMPTY:` line.
 
 Store `.env.keys` in the password manager. Confirm `.env` holds only
 `encrypted:` values (`grep -v '^#' .env | grep -v 'encrypted:'` prints only
-`DOTENV_PUBLIC_KEY`), then commit:
+`DOTENV_PUBLIC_KEY`). The repository is public, so this publishes the
+ciphertext; S11 accepts that, provided `.env.keys` never leaves the server
+and the password manager. Commit and, with the user's go-ahead, push:
 
 ```bash
 git add .env && git commit -m "chore: Add the encrypted deployment secrets"
+git push
 ```
 
 - [ ] **Step 5: Bring Dorothy up**
@@ -6589,7 +6713,7 @@ git add .env && git commit -m "chore: Add the encrypted deployment secrets"
 On the server:
 
 ```bash
-git clone git@github.com:chewygumxx/dorothy-hermes.git && cd dorothy-hermes
+git clone https://github.com/chewygumxx/dorothy-hermes.git && cd dorothy-hermes
 install -m 0600 /dev/stdin .env.keys    # paste from the password manager, then Ctrl-D
 chmod -R a+rX hermes                     # readable under userns-remap
 mise trust && mise install
@@ -6621,7 +6745,8 @@ them, since they hold conversation text.
 4. **Resources:** every 5 minutes for an hour,
    `docker stats --no-stream --format '{{.Name}},{{.CPUPerc}},{{.MemUsage}},{{.PIDs}}' >> ~/dorothy-stats.csv`;
    record peaks against the limits (4 GB and 512 pids for `hermes`; 1 GB
-   and 128 for `dorothy-sync`).
+   and 128 for `dorothy-sync`), and the largest bundle's size beside the
+   sidecar's peak (the 1 GB limit is a guess against the 256 MiB cap).
 5. **Conversation:** three messages to the bot; reply latency for each; one
    message from a non-allowlisted account (expect no service).
 6. **Sync:** after three intervals, the commits in `dorothy-memory`
@@ -6632,31 +6757,50 @@ them, since they hold conversation text.
    appears in `memories/` on GitHub.
 8. **Config delivery:** push a `SOUL.md` tweak; time until applied (at most
    one interval); gateway restart duration from the logs.
-9. **Shutdown and warm boot:** `docker compose down` duration, the final
-   snapshot's commit on GitHub, then `mise run up` time to healthy.
+9. **Shutdown and warm boot:** send one message to the bot first, so the
+   final snapshot has something to publish; then `docker compose down`
+   duration, the final snapshot's commit on GitHub, then `mise run up` time
+   to healthy.
 10. **Cold-restore drill:** `docker compose down`,
     `docker volume rm dorothy_hermes-data`, `mise run up`; time to healthy,
     `optimize-storage` duration, and whether Dorothy recalls the earlier
     conversation and the fact from item 7.
 11. **Security spot checks:** S1
     (`docker inspect` of `hermes` shows no `DOROTHY_MEMORY_DEPLOY_KEY`); S9
-    (`ss -tlnp` on the host shows no Docker listeners); S5, without printing
-    any value:
+    (`ss -tlnp` on the host shows no Docker listeners); S5 on the server,
+    over the whole history of the sidecar's own checkout, without printing
+    any value. The secrets are every `*_TOKEN`, `*_KEY`, `*_SECRET` and
+    `*_PASSWORD` value, each deploy key's decoded lines, and the
+    `API_SERVER_KEY` upstream generated:
 
     ```bash
-    git clone git@github.com:chewygumxx/dorothy-memory.git /tmp/dm
-    dotenvx get --format json | jq -r 'to_entries[] | select(.key | test("_(TOKEN|KEY|SECRET|PASSWORD)$")) | .value' |
-      while IFS= read -r v; do git -C /tmp/dm grep -qF -- "$v" && echo LEAK; done; echo scanned
+    dir=$(mktemp -d) && secrets="$dir/secrets"
+    {
+      dotenvx get --format json | jq -r 'to_entries[] | select(.key | test("_(TOKEN|KEY|SECRET|PASSWORD)$")) | .value'
+      for k in DOROTHY_CONFIG_DEPLOY_KEY DOROTHY_MEMORY_DEPLOY_KEY; do
+        dotenvx get "$k" | base64 -d | awk 'length > 20 && !/^-----/'
+      done
+      docker compose exec -T hermes sh -c "sed -n 's/^API_SERVER_KEY=//p' /opt/data/.env" | tr -d "\"'"
+    } | awk 'length >= 8' > "$secrets"
+    wc -l < "$secrets"
+    docker compose exec -T dorothy-sync git -C /var/lib/dorothy/state/memory log -p --all |
+      grep -cFf "$secrets"
+    shred -u "$secrets" && rm -r "$dir"
     ```
 
-    Expected: `scanned` alone.
-12. **Surprises:** anything that behaved differently from the specs.
+    Expected: a count of secrets of at least 5, then `0` matches.
+12. **Status files and health:** at the hour mark, the three status files
+    (`docker compose exec -T hermes cat /opt/data/dorothy/status/apply.json
+    /opt/data/dorothy/status/snapshot.json /var/lib/dorothy/restore/status.json`)
+    and each service's `docker inspect --format '{{json .State.Health.Log}}'`.
+13. **Surprises:** anything that behaved differently from the specs.
 
 - [ ] **Step 7: Commit the record**
 
 ```bash
+git add docs/notes
 bun run lint:md && bun run lint:emdash
-git add docs/notes && git commit -m "docs: Record the first live run"
+git commit -m "docs: Record the first live run"
 ```
 
 ---
@@ -6683,7 +6827,8 @@ source layout (`util.ts`, `files.ts`, `test-helpers.ts`, `platforms.json`,
 co-located tests), S5 (blob redaction before hex), the gateway test's
 previous-pid rule, `DOROTHY_HOST`, and the boot check's temporary home in
 `dorothy-snapshot`. Add every smoke-test finding from Task 16 that changed
-behaviour.
+behaviour, every Surprise from the live run, and the measured sidecar
+limits.
 
 - [ ] **Step 3: Update the README**
 

@@ -1,0 +1,4 @@
+{"type":"user","sessionId":"dorothy-fixture-1","cwd":"/opt/data","message":{"role":"user","content":"Remember the zebracorn hint and the token dorothy-fake-token-0123456789abcdef"}}
+{"type":"assistant","sessionId":"dorothy-fixture-1","message":{"role":"assistant","content":[{"type":"text","text":"Noted the zebracorn hint."}]}}
+{"type":"user","sessionId":"dorothy-fixture-1","message":{"role":"user","content":"東京の天気はどうですか"}}
+{"type":"assistant","sessionId":"dorothy-fixture-1","message":{"role":"assistant","content":"東京は晴れです"}}

@@ -1,0 +1,162 @@
+# vim:set expandtab shiftwidth=4 filetype=yaml foldlevel=3:
+# SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/compose.yaml
+#
+#
+
+# Dorothy: the unmodified upstream image, run three ways. See
+# docs/specs/2026-10-03-hermes-deployment-design.md (Compose stack) and
+# docs/specs/2026-10-03-hermes-security-design.md (S1, S3, S9, S10).
+# cloudflared and the webhook arrive with plan 3.
+
+name: dorothy
+
+x-hardening: &hardening
+    security_opt:
+        - no-new-privileges:true
+    cap_drop:
+        - ALL
+
+services:
+    # Hands the three dorothy-* volume roots to UID 10000; not recursive.
+    dorothy-init:
+        <<: *hardening
+        image: nousresearch/hermes-agent:v2026.9.24@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
+        user: "0:0"
+        entrypoint:
+            - /bin/chown
+            - 10000:10000
+            - /v/outbox
+            - /v/restore
+            - /v/state
+        cap_add:
+            - CHOWN
+        read_only: true
+        network_mode: none
+        restart: "no"
+        tmpfs:
+            - /opt/data
+        volumes:
+            - dorothy-outbox:/v/outbox
+            - dorothy-restore:/v/restore
+            - dorothy-state:/v/state
+
+    # Trusted: the only holder of the memory deploy key (S1).
+    dorothy-sync:
+        <<: *hardening
+        image: nousresearch/hermes-agent:v2026.9.24@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
+        entrypoint: ["/usr/local/bin/node", "/opt/dorothy/src/sidecar.ts"]
+        init: true
+        user: "10000:10000"
+        read_only: true
+        hostname: dorothy-sync
+        tmpfs:
+            - /tmp
+            - /opt/data:uid=10000,gid=10000,mode=0700
+        environment:
+            DOROTHY_MEMORY_DEPLOY_KEY: ${DOROTHY_MEMORY_DEPLOY_KEY:?set it in .env}
+            DOROTHY_MEMORY_REPO: ${DOROTHY_MEMORY_REPO:-git@github.com:chewygumxx/dorothy-memory.git}
+            DOROTHY_SYNC_INTERVAL: ${DOROTHY_SYNC_INTERVAL:-900}
+            DOROTHY_BUNDLE_MAX_BYTES: ${DOROTHY_BUNDLE_MAX_BYTES:-268435456}
+            DOROTHY_ALLOW_EMPTY: ${DOROTHY_ALLOW_EMPTY:-}
+            DOROTHY_HOST: ${DOROTHY_HOST:-unknown}
+            PATH: /usr/local/bin:/usr/bin:/bin
+            HOME: /opt/data
+            GIT_CONFIG_GLOBAL: /dev/null
+            GIT_CONFIG_NOSYSTEM: "1"
+        volumes:
+            - ./hermes/src:/opt/dorothy/src:ro
+            - ./hermes/known_hosts:/opt/dorothy/known_hosts:ro
+            - dorothy-outbox:/var/lib/dorothy/outbox:ro
+            - dorothy-restore:/var/lib/dorothy/restore
+            - dorothy-state:/var/lib/dorothy/state
+        networks:
+            - sync
+        depends_on:
+            dorothy-init:
+                condition: service_completed_successfully
+        pids_limit: 128
+        mem_limit: 1g
+        stop_grace_period: 60s
+        restart: unless-stopped
+        healthcheck:
+            test:
+                - CMD
+                - /usr/local/bin/node
+                - /opt/dorothy/src/sidecar-health.ts
+            interval: 30s
+            timeout: 10s
+            retries: 3
+            start_period: 6m
+            start_interval: 5s
+
+    # Untrusted: the agent can become root in here (S4).
+    hermes:
+        <<: *hardening
+        image: nousresearch/hermes-agent:v2026.9.24@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
+        command: ["gateway", "run"]
+        hostname: dorothy
+        cap_add:
+            - CHOWN
+            - DAC_OVERRIDE
+            - SETUID
+            - SETGID
+            - KILL
+        tmpfs:
+            - /run:exec
+        pids_limit: 512
+        mem_limit: 4g
+        environment:
+            S6_BEHAVIOUR_IF_STAGE2_FAILS: "2"
+            S6_KILL_FINISH_MAXTIME: "60000"
+            DOROTHY_CONFIG_REPO: ${DOROTHY_CONFIG_REPO:-git@github.com:chewygumxx/dorothy-config.git}
+            DOROTHY_CONFIG_REPO_NAME: ${DOROTHY_CONFIG_REPO_NAME:-}
+            DOROTHY_CONFIG_DEPLOY_KEY: ${DOROTHY_CONFIG_DEPLOY_KEY:?set it in .env}
+            DOROTHY_SYNC_INTERVAL: ${DOROTHY_SYNC_INTERVAL:-900}
+            ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+            CLAUDE_CODE_OAUTH_TOKEN: ${CLAUDE_CODE_OAUTH_TOKEN:-}
+            TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+            TELEGRAM_ALLOWED_USERS: ${TELEGRAM_ALLOWED_USERS:-}
+        volumes:
+            - hermes-data:/opt/data
+            - dorothy-outbox:/var/lib/dorothy/outbox
+            - dorothy-restore:/var/lib/dorothy/restore:ro
+            - ./hermes/src:/opt/dorothy/src:ro
+            - ./hermes/known_hosts:/opt/dorothy/known_hosts:ro
+            - ./hermes/cont-init.d/005-dorothy-bootstrap:/etc/cont-init.d/005-dorothy-bootstrap:ro
+            - ./hermes/cont-finish.d/dorothy-final-snapshot:/etc/cont-finish.d/dorothy-final-snapshot:ro
+            - ./hermes/s6-rc.d/dorothy-snapshot:/etc/s6-overlay/s6-rc.d/dorothy-snapshot:ro
+            - ./hermes/s6-rc.d/user/contents.d/dorothy-snapshot:/etc/s6-overlay/s6-rc.d/user/contents.d/dorothy-snapshot:ro
+        networks:
+            - edge
+        depends_on:
+            dorothy-sync:
+                condition: service_healthy
+        stop_grace_period: 90s
+        restart: unless-stopped
+        healthcheck:
+            test:
+                - CMD
+                - /command/s6-setuidgid
+                - hermes
+                - /usr/local/bin/node
+                - /opt/dorothy/src/health.ts
+            interval: 60s
+            timeout: 20s
+            retries: 3
+            start_period: 6m
+            start_interval: 10s
+
+volumes:
+    hermes-data: {}
+    dorothy-outbox: {}
+    dorothy-restore: {}
+    dorothy-state: {}
+
+networks:
+    edge: {}
+    sync: {}

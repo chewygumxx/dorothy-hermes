@@ -1,0 +1,24 @@
+# vim:set expandtab shiftwidth=4 filetype=yaml foldlevel=3:
+# SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/smoke/compose.smoke.yaml
+#
+#
+
+# Fixture repositories for smoke/run.sh. Mounts and test data only: the
+# hardening in compose.yaml runs unmodified.
+
+services:
+    dorothy-sync:
+        volumes:
+            - ${SMOKE_REPOS:?}:/fixtures
+
+    hermes:
+        environment:
+            DOROTHY_SMOKE_TOKEN: ${DOROTHY_SMOKE_TOKEN:?}
+        volumes:
+            - ${SMOKE_REPOS:?}:/fixtures:ro
+            - ./smoke:/smoke:ro

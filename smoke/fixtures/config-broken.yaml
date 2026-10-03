@@ -1,0 +1,8 @@
+skills:
+    external_dirs:
+        - /opt/data/dorothy/config/skills
+platforms:
+    whatsapp:
+        enabled: true
+        extra:
+            dm_policy: open
