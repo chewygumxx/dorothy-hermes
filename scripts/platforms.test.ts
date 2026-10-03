@@ -13,7 +13,7 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type TestContext, test } from "node:test";
-import { formatRegistry, readRegistry } from "./platforms.ts";
+import { formatRegistry, type Judgments, readRegistry } from "./platforms.ts";
 
 /** A small upstream tree in the shapes the pinned image uses. */
 const UPSTREAM: Record<string, string> = {
@@ -64,6 +64,9 @@ roles = os.getenv("DISCORD_ALLOWED_ROLES", "")
 `,
 };
 
+/** Judgments for the fixture: its one name outside the parsed tables. */
+const JUDGED: Judgments = { grants: ["DISCORD_ALLOWED_ROLES"], notAccess: {} };
+
 function upstream(t: TestContext, edits: Record<string, string> = {}) {
     const root = mkdtempSync(join(tmpdir(), "platforms-"));
     t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -75,7 +78,7 @@ function upstream(t: TestContext, edits: Record<string, string> = {}) {
 }
 
 test("the registry is read from upstream's source", (t) => {
-    assert.deepEqual(readRegistry(upstream(t)), {
+    assert.deepEqual(readRegistry(upstream(t), JUDGED), {
         platforms: {
             discord: {
                 enabledBy: ["DISCORD_APP_ID", "DISCORD_BOT_TOKEN"],
@@ -107,7 +110,7 @@ test("the registry is read from upstream's source", (t) => {
 });
 
 test("the output is sorted, indented JSON with a final newline", (t) => {
-    const text = formatRegistry(readRegistry(upstream(t)));
+    const text = formatRegistry(readRegistry(upstream(t), JUDGED));
     assert.ok(text.endsWith("}\n"));
     assert.match(text, /^\{\n {4}"extraAllowVariables": \[\n/);
     const keys = [...text.matchAll(/^ {4}"(\w+)":/gm)].map((m) => m[1]);
@@ -128,12 +131,12 @@ _ENV_ENABLE_CREDENTIALS: dict = {
 }
 `,
     });
-    assert.throws(() => readRegistry(root), /_ENV_ENABLE_CREDENTIALS/);
+    assert.throws(() => readRegistry(root, JUDGED), /_ENV_ENABLE_CREDENTIALS/);
 });
 
 test("a missing table stops the run", (t) => {
     const root = upstream(t, { "gateway/pairing.py": "\n" });
-    assert.throws(() => readRegistry(root), /_PLATFORM_ALLOWLIST_ENV/);
+    assert.throws(() => readRegistry(root, JUDGED), /_PLATFORM_ALLOWLIST_ENV/);
 });
 
 test("an unknown platform member stops the run", (t) => {
@@ -144,7 +147,7 @@ _ENV_ENABLE_CREDENTIALS: dict = {
 }
 `,
     });
-    assert.throws(() => readRegistry(root), /Platform\.SLACK/);
+    assert.throws(() => readRegistry(root, JUDGED), /Platform\.SLACK/);
 });
 
 test("a plugin allowlist named by a variable stops the run", (t) => {
@@ -153,5 +156,48 @@ test("a plugin allowlist named by a variable stops the run", (t) => {
     return PlatformEntry(name="irc", allowed_users_env=IRC_ENV)
 `,
     });
-    assert.throws(() => readRegistry(root), /irc\/adapter\.py/);
+    assert.throws(() => readRegistry(root, JUDGED), /irc\/adapter\.py/);
+});
+
+const FOO = {
+    "plugins/platforms/foo/adapter.py": `
+policy = os.getenv("FOO_DM_POLICY", "pairing")
+tools = os.getenv("SANDBOX_ALLOWED_TOOLS", "")
+`,
+};
+
+test("an access-shaped name upstream adds must be judged", (t) => {
+    assert.throws(
+        () => readRegistry(upstream(t, FOO), JUDGED),
+        /FOO_DM_POLICY.*SANDBOX_ALLOWED_TOOLS|SANDBOX_ALLOWED_TOOLS.*FOO_DM_POLICY/s,
+    );
+});
+
+test("a judged grant joins the registry; an unrelated name stays out", (t) => {
+    const registry = readRegistry(upstream(t, FOO), {
+        grants: [...JUDGED.grants, "FOO_DM_POLICY"],
+        notAccess: { SANDBOX_ALLOWED_TOOLS: "tools, not people" },
+    });
+    assert.ok(registry.extraAllowVariables.includes("FOO_DM_POLICY"));
+    assert.ok(!registry.extraAllowVariables.includes("SANDBOX_ALLOWED_TOOLS"));
+});
+
+test("a judgment upstream no longer needs stops the run", (t) => {
+    const judged = {
+        grants: [...JUDGED.grants, "GONE_ALLOWED_USERS"],
+        notAccess: { GONE_ALLOW_FROM: "removed upstream" },
+    };
+    assert.throws(
+        () => readRegistry(upstream(t), judged),
+        /GONE_ALLOWED_USERS.*GONE_ALLOW_FROM/s,
+    );
+});
+
+test("the virtualenv and upstream's tests are not swept", (t) => {
+    const root = upstream(t, {
+        ".venv/lib/python3.13/site-packages/x.py": `BAR_ALLOWED_USERS = 1\n`,
+        "tests/gateway/test_authz.py": `os.environ["BAR_ALLOW_ALL_USERS"] = "1"\n`,
+        "gateway/test_helpers.py": `BAR_ALLOW_FROM = "*"\n`,
+    });
+    assert.doesNotThrow(() => readRegistry(root, JUDGED));
 });

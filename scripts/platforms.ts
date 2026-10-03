@@ -30,6 +30,66 @@ import type {
 export class UpstreamShapeError extends Error {}
 
 const NAME = `"([A-Z][A-Z0-9_]*)"`;
+const GLOBAL_ALLOWLIST = "GATEWAY_ALLOWED_USERS";
+const GLOBAL_ALLOW_ALL = "GATEWAY_ALLOW_ALL_USERS";
+
+const NARROWS = "narrows where the bot answers; empty means no restriction";
+
+/** Judged against the pinned image; see Judgments. */
+export const JUDGMENTS: Judgments = {
+    grants: [
+        // Members of a listed group or room, or a trusted peer, get in.
+        "A2A_TRUSTED_PEERS",
+        "DISCORD_ALLOWED_ROLES",
+        "LINE_ALLOWED_GROUPS",
+        "LINE_ALLOWED_ROOMS",
+        "SIGNAL_GROUP_ALLOWED_USERS",
+        "SIMPLEX_GROUP_ALLOWED",
+        "WEIXIN_GROUP_ALLOWED_USERS",
+        "WHATSAPP_ALLOW_FROM",
+        "WHATSAPP_CLOUD_ALLOW_FROM",
+        "WHATSAPP_CLOUD_GROUP_ALLOW_FROM",
+        "WHATSAPP_GROUP_ALLOWED_USERS",
+        "WHATSAPP_GROUP_ALLOW_FROM",
+        "YUANBAO_DM_ALLOW_FROM",
+        "YUANBAO_GROUP_ALLOW_FROM",
+        // open | allowlist | pairing | disabled: "open" lets anyone in.
+        "FEISHU_GROUP_POLICY",
+        "WECOM_DM_POLICY",
+        "WECOM_GROUP_POLICY",
+        "WEIXIN_DM_POLICY",
+        "WEIXIN_GROUP_POLICY",
+        "WHATSAPP_CLOUD_DM_POLICY",
+        "WHATSAPP_CLOUD_GROUP_POLICY",
+        "WHATSAPP_DM_POLICY",
+        "WHATSAPP_GROUP_POLICY",
+        "YUANBAO_DM_POLICY",
+        "YUANBAO_GROUP_POLICY",
+    ],
+    notAccess: {
+        DEMO_ALLOWED_SENDER: "an example in a comment (local_env_policy.py)",
+        DINGTALK_ALLOWED_CHATS: NARROWS,
+        DISCORD_ALLOWED_CHANNELS: NARROWS,
+        LOGIN_NOT_ALLOWED: "an error message",
+        MATRIX_ALLOWED_ROOMS: NARROWS,
+        MATTERMOST_ALLOWED_CHANNELS: NARROWS,
+        MSTEAMS_ALLOWED_USERS:
+            "named only by the OpenClaw migration skill; Teams reads TEAMS_ALLOWED_USERS",
+        NOT_ALLOWED: "an error code",
+        PLATFORM_ALLOWED_USERS: "a placeholder in an authz_mixin.py docstring",
+        PLATFORM_GROUP_ALLOWED_CHATS:
+            "a placeholder in an authz_mixin.py docstring",
+        PLATFORM_GROUP_ALLOWED_USERS:
+            "a placeholder in an authz_mixin.py docstring",
+        RELAY_ALLOWED_USERS:
+            "upstream documents that the relay has no local allowlist",
+        SANDBOX_ALLOWED_TOOLS: "the code sandbox's tools, not people",
+        SLACK_ALLOWED_CHANNELS: NARROWS,
+        TELEGRAM_ALLOWED_CHATS: NARROWS,
+        TELEGRAM_ALLOWED_TOPICS: NARROWS,
+        TOOL_NOT_ALLOWED: "an error code",
+    },
+};
 const MEMBER = String.raw`Platform\.([A-Z][A-Z0-9_]*)`;
 
 function read(root: string, path: string): string {
@@ -132,18 +192,64 @@ function pluginVariables(root: string): Set<string> {
     return found;
 }
 
-/** Role allowlists (Discord) grant access before the user allowlist is read. */
-function roleVariables(root: string): Set<string> {
-    const roles = /\b[A-Z][A-Z0-9_]*_ALLOWED_ROLES\b/g;
-    const found = new Set<string>();
-    for (const dir of ["gateway", "plugins"])
-        for (const file of pythonFiles(join(root, dir)))
-            for (const match of readFileSync(file, "utf8").matchAll(roles))
-                found.add(match[0]);
-    return found;
+/**
+ * Names outside the parsed tables that look like access settings, judged
+ * by reading where upstream uses them. A grant joins extraAllowVariables;
+ * anything else needs the reason it does not let anyone in.
+ */
+export interface Judgments {
+    grants: string[];
+    notAccess: Record<string, string>;
 }
 
-export function readRegistry(root = "/opt/hermes"): PlatformRegistry {
+/** Anything named like an allowlist, an allow-all switch, a trust list or a DM/group policy. */
+const ACCESS_SHAPED =
+    /\b[A-Z][A-Z0-9_]*_(?:ALLOWED(?:_[A-Z]+)?|ALLOW_ALL_[A-Z]+|ALLOW_BOTS|ALLOW_FROM|TRUSTED_[A-Z]+|(?:DM|GROUP)_POLICY)\b/g;
+
+/** Upstream's own source, without its virtualenv, Node packages or tests. */
+function sweptFiles(root: string): string[] {
+    return pythonFiles(root).filter((file) => {
+        const path = relative(root, file);
+        return !(
+            /^(?:\.venv|node_modules)\//.test(path) ||
+            /(?:^|\/)tests?\//.test(path) ||
+            /(?:^|\/)test_[^/]*\.py$|_test\.py$/.test(path)
+        );
+    });
+}
+
+/**
+ * Every access-shaped name in upstream's source must be in the parsed
+ * tables or judged; a new one stops the run until someone reads it.
+ */
+function sweep(root: string, known: Set<string>, judged: Judgments): string[] {
+    const found = new Set<string>();
+    for (const file of sweptFiles(root))
+        for (const match of readFileSync(file, "utf8").matchAll(ACCESS_SHAPED))
+            found.add(match[0]);
+    const verdicts = new Set([
+        ...judged.grants,
+        ...Object.keys(judged.notAccess),
+    ]);
+    const unjudged = [...found].filter(
+        (name) => !known.has(name) && !verdicts.has(name),
+    );
+    if (unjudged.length > 0)
+        throw new UpstreamShapeError(
+            `judge these access-shaped names in scripts/platforms.ts: ${unjudged.sort().join(", ")}`,
+        );
+    const stale = [...verdicts].filter((name) => !found.has(name));
+    if (stale.length > 0)
+        throw new UpstreamShapeError(
+            `upstream no longer mentions these judged names; drop them: ${stale.sort().join(", ")}`,
+        );
+    return judged.grants;
+}
+
+export function readRegistry(
+    root = "/opt/hermes",
+    judged: Judgments = JUDGMENTS,
+): PlatformRegistry {
     const members = platformValues(read(root, "gateway/config.py"));
     const allowlists = new Map(
         dictEntries(
@@ -186,7 +292,16 @@ export function readRegistry(root = "/opt/hermes"): PlatformRegistry {
         for (const [, value] of dictEntries(authz, table, MEMBER, NAME))
             extra.add(names(value)[0]);
     for (const name of pluginVariables(root)) extra.add(name);
-    for (const name of roleVariables(root)) extra.add(name);
+    const known = new Set([
+        ...extra,
+        GLOBAL_ALLOWLIST,
+        GLOBAL_ALLOW_ALL,
+        ...Object.values(platforms).flatMap((entry) => [
+            entry.allowedUsers,
+            entry.allowAllUsers,
+        ]),
+    ]);
+    for (const name of sweep(root, known, judged)) extra.add(name);
     for (const entry of Object.values(platforms)) {
         extra.delete(entry.allowedUsers);
         extra.delete(entry.allowAllUsers);
@@ -194,8 +309,8 @@ export function readRegistry(root = "/opt/hermes"): PlatformRegistry {
 
     return {
         platforms,
-        globalAllowlist: "GATEWAY_ALLOWED_USERS",
-        globalAllowAll: "GATEWAY_ALLOW_ALL_USERS",
+        globalAllowlist: GLOBAL_ALLOWLIST,
+        globalAllowAll: GLOBAL_ALLOW_ALL,
         extraAllowVariables: [...extra].sort(),
     };
 }
