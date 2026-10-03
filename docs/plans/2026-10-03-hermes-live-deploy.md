@@ -5959,7 +5959,12 @@ services:
         <<: *hardening
         image: nousresearch/hermes-agent:v2026.9.24@sha256:fca358f12efd65bfaaca05884166f15c0e2788375ca30d77061ac1ebc96452b7
         user: "0:0"
-        entrypoint: ["/bin/chown", "10000:10000", "/v/outbox", "/v/restore", "/v/state"]
+        entrypoint:
+            - /bin/chown
+            - 10000:10000
+            - /v/outbox
+            - /v/restore
+            - /v/state
         cap_add:
             - CHOWN
         read_only: true
@@ -6011,7 +6016,10 @@ services:
         stop_grace_period: 60s
         restart: unless-stopped
         healthcheck:
-            test: ["CMD", "/usr/local/bin/node", "/opt/dorothy/src/sidecar-health.ts"]
+            test:
+                - CMD
+                - /usr/local/bin/node
+                - /opt/dorothy/src/sidecar-health.ts
             interval: 30s
             timeout: 10s
             retries: 3
@@ -6064,7 +6072,12 @@ services:
         stop_grace_period: 90s
         restart: unless-stopped
         healthcheck:
-            test: ["CMD", "/command/s6-setuidgid", "hermes", "/usr/local/bin/node", "/opt/dorothy/src/health.ts"]
+            test:
+                - CMD
+                - /command/s6-setuidgid
+                - hermes
+                - /usr/local/bin/node
+                - /opt/dorothy/src/health.ts
             interval: 60s
             timeout: 20s
             retries: 3
@@ -6087,10 +6100,12 @@ token and allowlist variables from `hermes/src/platforms.json` instead.
 
 - [ ] **Step 9: Validate and commit**
 
+The lint scripts list files with `git ls-files`, so stage first:
+
 ```bash
 DOROTHY_MEMORY_DEPLOY_KEY=x DOROTHY_CONFIG_DEPLOY_KEY=x docker compose config --quiet
-bun run lint:yaml
 git add hermes/known_hosts hermes/cont-init.d hermes/cont-finish.d hermes/s6-rc.d compose.yaml
+bun run lint:yaml
 git commit -m "feat: Add the compose stack and s6 stubs"
 ```
 
