@@ -22,9 +22,11 @@ tags:
 
 - [Subagent ledger](./subagent-ledger.md): brief every subagent with
   docs/agents/subagent-ledger.md so cut-off work survives
-- [Plan review status](./plan-review-status.md): executing natively on
-  feat/live-deploy; ledger in .superpowers/sdd; docker via /tmp/dk
+- [Plan review status](./plan-review-status.md): Tasks 1-16 merged; Task 17
+  live deploy next; ledger in .superpowers/sdd; docker via /tmp/dk
 - [Local Hermes scratch](./local-hermes-scratch.md): ~/.hermes is modifiable
   reference; use gtrash under ~
 - [Threat model includes owner](./threat-model-includes-owner.md): owner
   mistakes are in scope; guard with rulesets, not "outside the model"
+- [No Python](./no-python.md): TypeScript first, bash if impractical; Python
+  only as upstream's code inside the image
