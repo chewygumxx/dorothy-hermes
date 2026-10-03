@@ -45,8 +45,14 @@ branch, commit each step on its own, and stop at the first check that fails.
 - Run `scripts/platforms.ts` inside the new image and format the result, as
   its doc comment shows. The secrets guard blocks editing
   `hermes/src/platforms.json` by hand.
+- If it stops with "judge these access-shaped names", read where upstream
+  uses each one. A name that lets someone in goes in `JUDGMENTS.grants` in
+  `scripts/platforms.ts`; anything else goes in `JUDGMENTS.notAccess` with
+  the reason. Names that only narrow where the bot answers are not grants.
+  If it stops with "upstream no longer mentions", drop those judgments.
 - Read the diff. A new platform, or a new allowlist variable, changes what S6
-  refuses at boot; check it against the security spec.
+  refuses at boot; check it against the security spec. Until this step is
+  done, the smoke test's drift check fails.
 
 ## 4. Run the smoke test
 
