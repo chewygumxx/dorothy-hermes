@@ -7,7 +7,7 @@ metadata:
   node_type: memory
   type: project
   originSessionId: 0a738473-90de-4a09-bcdd-f6b481bebb31
-  modified: 2026-10-03T16:54:21.564Z
+  modified: 2026-10-03T17:41:03.923Z
 ---
 
 <!--
@@ -41,9 +41,14 @@ fresh login. Compose is the system pacman `docker-compose`.
 
 For Task 18 (fold into the specs), beyond the ledger: on 2026-10-04 the
 Python-to-TypeScript port of `scripts/platforms.py` found the registry
-missed nine plugin platforms' allowlist variables (fixed, 07d639d). Still
-open: plugin platforms enable themselves in code (`env_enablement_fn`), so
-S6's "token without an allowlist" check cannot cover them.
+missed nine plugin platforms' allowlist variables (b0747b7). A sweep of
+upstream's source then found 24 more grants: group allowlists, ALLOW_FROM
+and trust lists, and DM/group policies where `open` admits anyone
+(b0ba1ff, f36c134). S6 now also refuses access settings by name alone
+(6470d21), and smoke fails if platforms.json drifts from the image
+(d7101dd). Still open: plugin platforms enable themselves in code
+(`env_enablement_fn`), so S6's "token without an allowlist" check cannot
+cover them.
 
 **Why:** the user's roadmap is plan, review, fold, then build and deploy live
 to gather data.
