@@ -1,15 +1,4 @@
 ---
-__cgxx: |
-  # vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3:
-  # SPDX-License-Identifier: GPL-3.0-only
-
-  #
-  #
-  # ~chewygumxx/dorothy-hermes.git
-  # ::: :/.claude/memory/plan-review-status.md
-  #
-  #
-
 name: plan-review-status
 description: >-
   Live-deploy plan: Tasks 1-16 merged to main (PR #1); next is Task 17, the
@@ -20,6 +9,17 @@ metadata:
   originSessionId: 0a738473-90de-4a09-bcdd-f6b481bebb31
   modified: 2026-10-03T16:54:21.564Z
 ---
+
+<!--
+# SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/.claude/memory/plan-review-status.md
+#
+#
+-->
 
 The plan `docs/plans/2026-10-03-hermes-live-deploy.md` was executed natively
 (superpowers:executing-plans). Tasks 1-16 merged via PR #1 on 2026-10-03; a
@@ -51,3 +51,5 @@ to gather data.
 **How to apply:** read the ledger before acting; Task 6 Step 5 ran against an
 image-made state.db, not the user's (ruling in the ledger). See
 [threat-model-includes-owner](./threat-model-includes-owner.md).
+
+<!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->
