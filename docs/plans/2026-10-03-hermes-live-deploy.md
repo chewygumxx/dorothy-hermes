@@ -62,7 +62,9 @@ Deliberate departures from the spec, each folded back into it in Task 18:
 - Blob redaction (S5) runs on raw bytes inside `dumpDatabase`, before hex
   encoding, rather than on the hex text.
 - The gateway test ignores the pid that was up before the restart, so a
-  slow-to-stop old process is not mistaken for the new one.
+  slow-to-stop old process is not mistaken for the new one, and starts its
+  30 s window only once that process has exited (bounded at 90 s): upstream
+  drains running cron jobs before it restarts.
 - Smoke step 3 (webhook apply) becomes a fallback apply through
   `snapshot.ts --once`.
 - `DOROTHY_HOST` names the server in sync commit messages; the container's
@@ -95,7 +97,8 @@ Deliberate departures from the spec, each folded back into it in Task 18:
 - `DOROTHY_SYNC_INTERVAL` defaults to 900 seconds; publish loop every 30 s.
 - Locks: `/run/dorothy/snapshot.lock` and `/run/dorothy/apply.lock`, 10 minute
   bounded wait, dead owners taken over.
-- Gateway test: up within 30 s, then still up with the same pid 10 s later.
+- Gateway test: once the old pid has gone (waited for up to 90 s), up within
+  30 s, then still up with the same pid 10 s later.
 - No em dashes anywhere (hook and `lint:emdash`). Commit headers at most 50
   characters, body lines at most 72 (commitlint).
 - Format with `bunx biome check --write <paths>` before each commit; the
@@ -108,13 +111,16 @@ Inputs the spec implies but its test list does not name, each pinned by a test
 in the owning task:
 
 1. `dorothy-config` lacking `config.yaml` or `SOUL.md`: bootstrap must fail
-   with a message naming the file, not a stack trace (Task 12).
+   with a message naming the file, not a stack trace, unless a last-good
+   copy exists, which then boots; an apply must leave the running config
+   alone (Tasks 11 and 12).
 2. Transcript text containing NUL characters: the dump must round-trip it,
    since `sqlite3_exec` stops at the first NUL (Task 6).
 3. Two backups in the same second: Hermes suffixes `-<n>`, and the snapshot
    must still find exactly its own directory (Task 10).
-4. A gateway that takes most of the 30 s window to come back after a restart:
-   a good config must not be rolled back (Task 11).
+4. A gateway that takes most of the 30 s window to come back after a restart,
+   or whose old process drains a cron job first: a good config must not be
+   rolled back (Task 11).
 5. `.env` lines with `export`, quotes or comments: both the S6 cleanup and the
    S5 secret collection must read them as upstream does (Tasks 5 and 12).
 
@@ -2946,11 +2952,22 @@ export function bareRepo(t: TestContext): string {
 }
 
 /** Commits files on main from a separate clone, as a person would. */
-export function pushFiles(t: TestContext, url: string, files: Record<string, string>, message = "human edit"): string {
+/** Commits files to main and pushes; a null content deletes that file. */
+export function pushFiles(
+    t: TestContext,
+    url: string,
+    files: Record<string, string | null>,
+    message = "human edit",
+): string {
     const work = join(tempDir(t), "work");
     git(["clone", "--quiet", url, work], tmpdir());
     git(["symbolic-ref", "HEAD", "refs/heads/main"], work);
-    writeFiles(work, files);
+    const written: Record<string, string> = {};
+    for (const [path, content] of Object.entries(files)) {
+        if (content === null) rmSync(join(work, path), { force: true });
+        else written[path] = content;
+    }
+    writeFiles(work, written);
     git(["add", "--all"], work);
     git(["commit", "--quiet", "-m", message], work);
     git(["push", "--quiet", "origin", "HEAD:refs/heads/main"], work);
@@ -3538,10 +3555,12 @@ git commit -m "feat: Wrap the Hermes CLI and s6 status"
   `interface ConfigPaths { home; checkout; lastGood; applyStatus }`;
   `configPaths(home?: string): ConfigPaths`;
   `configGit(paths: ContainerPaths, env?: NodeJS.ProcessEnv, signal?: AbortSignal): Git`;
-  `copyConfig(from: string, to: string): void`;
-  `sameConfig(a: string, b: string): boolean`;
+  `copyConfig(from: string, to: string): void` (reads both files, then
+  writes); `sameConfig(a: string, b: string): boolean`;
+  `hasLastGood(paths: ConfigPaths): boolean`;
   `skillsWarning(configYaml: string): string | null`;
-  `interface GatewayTestTiming { upWithinMs; stableForMs; pollMs }`; `GATEWAY_TEST`;
+  `interface GatewayTestTiming { drainWithinMs; upWithinMs; stableForMs; pollMs }`;
+  `GATEWAY_TEST`;
   `interface ApplyDeps extends Clock { git: Git; hermes: HermesCli; paths: ConfigPaths; log: Log; timing?: GatewayTestTiming }`;
   `type ApplyOutcome = "unchanged" | "applied" | "rolled-back" | "failed"`;
   `gatewayTest(deps: ApplyDeps, previousPid: number | null): Promise<boolean>`;
@@ -3566,8 +3585,12 @@ import { bareRepo, fakeClock, fakeHermes, GIT_ENV, pushFiles, tempDir } from "./
 const GOOD = "skills:\n    external_dirs:\n        - /opt/data/dorothy/config/skills\n";
 const BROKEN = `${GOOD}# broken\n`;
 
-/** A gateway that is down while config.yaml says "broken", with a new pid per restart. */
-function fakeGateway(home: string, clock: { now(): number }, startDelayMs = 0) {
+/**
+ * A gateway that is down while config.yaml says "broken", with a new pid per
+ * restart. After a restart the old pid stays up for lingerMs (draining), then
+ * the new one takes startDelayMs to come up.
+ */
+function fakeGateway(home: string, clock: { now(): number }, startDelayMs = 0, lingerMs = 0) {
     let pid = 100;
     let since = Number.NEGATIVE_INFINITY;
     return {
@@ -3576,14 +3599,15 @@ function fakeGateway(home: string, clock: { now(): number }, startDelayMs = 0) {
             since = clock.now();
         },
         status(): GatewayStatus {
+            if (clock.now() - since < lingerMs) return { up: true, pid: pid - 1 };
             if (readFileSync(join(home, "config.yaml"), "utf8").includes("broken")) return { up: false, pid: null };
-            if (clock.now() - since < startDelayMs) return { up: false, pid: null };
+            if (clock.now() - since < lingerMs + startDelayMs) return { up: false, pid: null };
             return { up: true, pid };
         },
     };
 }
 
-async function setup(t: TestContext, startDelayMs = 0) {
+async function setup(t: TestContext, startDelayMs = 0, lingerMs = 0) {
     const url = bareRepo(t);
     const first = pushFiles(t, url, { "SOUL.md": "soul 1", "config.yaml": GOOD });
     const paths = configPaths(join(tempDir(t), "data"));
@@ -3591,7 +3615,7 @@ async function setup(t: TestContext, startDelayMs = 0) {
     await git.clone(url);
     copyConfig(paths.checkout, paths.home);
     const clock = fakeClock();
-    const gateway = fakeGateway(paths.home, clock, startDelayMs);
+    const gateway = fakeGateway(paths.home, clock, startDelayMs, lingerMs);
     const hermes = fakeHermes({ status: gateway.status, restart: gateway.restart });
     const logs: string[] = [];
     const deps: ApplyDeps = { ...clock, git, hermes, paths, log: (m) => logs.push(m) };
@@ -3643,16 +3667,23 @@ test("without a different last-good copy the failure is recorded", async (t) => 
 });
 
 test("a crash-looping gateway fails the test", async (t) => {
-    const { url, deps, hermes } = await setup(t);
+    const { url, deps } = await setup(t);
     let pid = 500;
     const looping = fakeHermes({ status: () => ({ up: true, pid: pid++ }) });
     pushFiles(t, url, { "SOUL.md": "soul 2" });
-    assert.notEqual(await applyConfig({ ...deps, hermes: looping }), "applied");
-    assert.deepEqual(hermes.calls, []);
+    assert.equal(await applyConfig({ ...deps, hermes: looping }), "failed");
+    // No last-good copy exists yet, so there is no second bounce.
+    assert.deepEqual(looping.calls, ["restart", "start"]);
 });
 
 test("a slow but healthy restart is not rolled back", async (t) => {
     const { url, deps } = await setup(t, 25_000);
+    pushFiles(t, url, { "SOUL.md": "soul 2" });
+    assert.equal(await applyConfig(deps), "applied");
+});
+
+test("an old gateway draining a cron job is waited out", async (t) => {
+    const { url, deps } = await setup(t, 5_000, 28_000);
     pushFiles(t, url, { "SOUL.md": "soul 2" });
     assert.equal(await applyConfig(deps), "applied");
 });
@@ -3698,6 +3729,18 @@ test("the boot check rolls back a broken config to last-good", async (t) => {
     assert.equal(await bootCheck(deps), "rolled-back");
     assert.equal(status(paths.applyStatus).rolledBackSha, bad);
     assert.equal(readFileSync(join(paths.home, "config.yaml"), "utf8"), GOOD);
+});
+
+test("a push deleting config.yaml leaves the running config alone", async (t) => {
+    const { url, paths, deps, hermes } = await setup(t);
+    const bad = pushFiles(t, url, { "SOUL.md": "soul 2", "config.yaml": null });
+    assert.equal(await applyConfig(deps), "failed");
+    assert.equal(readFileSync(join(paths.home, "SOUL.md"), "utf8"), "soul 1");
+    const recorded = status(paths.applyStatus);
+    assert.equal(recorded.rolledBackSha, bad);
+    assert.match(recorded.lastError ?? "", /config\.yaml is missing/);
+    assert.deepEqual(hermes.calls, []);
+    assert.equal(await applyConfig(deps), "unchanged");
 });
 
 test("missing config files are named", async (t) => {
@@ -3761,13 +3804,17 @@ function readRegular(path: string): Buffer | null {
     return readFileSync(path);
 }
 
-/** Copies, never links: upstream refuses symlinked config paths. */
+/**
+ * Copies, never links: upstream refuses symlinked config paths. Both files
+ * are read before either is written, so a missing one changes nothing.
+ */
 export function copyConfig(from: string, to: string): void {
-    for (const name of CONFIG_FILES) {
+    const files = CONFIG_FILES.map((name) => {
         const data = readRegular(join(from, name));
         if (data === null) throw new Error(`${name} is missing from ${from}`);
-        writeFileAtomic(join(to, name), data, 0o600);
-    }
+        return [name, data] as const;
+    });
+    for (const [name, data] of files) writeFileAtomic(join(to, name), data, 0o600);
 }
 
 export function sameConfig(a: string, b: string): boolean {
@@ -3778,7 +3825,7 @@ export function sameConfig(a: string, b: string): boolean {
     });
 }
 
-function hasLastGood(paths: ConfigPaths): boolean {
+export function hasLastGood(paths: ConfigPaths): boolean {
     return CONFIG_FILES.every((name) => lstatOrNull(join(paths.lastGood, name))?.isFile());
 }
 
@@ -3788,12 +3835,19 @@ export function skillsWarning(configYaml: string): string | null {
 }
 
 export interface GatewayTestTiming {
+    /** How long the old process may take to exit (upstream drains cron jobs first). */
+    drainWithinMs: number;
     upWithinMs: number;
     stableForMs: number;
     pollMs: number;
 }
 
-export const GATEWAY_TEST: GatewayTestTiming = { upWithinMs: 30_000, stableForMs: 10_000, pollMs: 1_000 };
+export const GATEWAY_TEST: GatewayTestTiming = {
+    drainWithinMs: 90_000,
+    upWithinMs: 30_000,
+    stableForMs: 10_000,
+    pollMs: 1_000,
+};
 
 export interface ApplyDeps extends Clock {
     git: Git;
@@ -3805,9 +3859,21 @@ export interface ApplyDeps extends Clock {
 
 export type ApplyOutcome = "unchanged" | "applied" | "rolled-back" | "failed";
 
-/** Up within 30 s under a pid other than previousPid, and the same pid 10 s later. */
+/**
+ * Once previousPid has gone (within 90 s): up within 30 s under another pid,
+ * and the same pid 10 s later. The 30 s start only when the old process has
+ * exited, so a restart that waits for a cron job is not judged early.
+ */
 export async function gatewayTest(deps: ApplyDeps, previousPid: number | null): Promise<boolean> {
     const timing = deps.timing ?? GATEWAY_TEST;
+    if (previousPid !== null) {
+        const drained = deps.now() + timing.drainWithinMs;
+        while (deps.now() < drained) {
+            const status = await deps.hermes.gatewayStatus();
+            if (!status?.up || status.pid !== previousPid) break;
+            await deps.sleep(timing.pollMs);
+        }
+    }
     const deadline = deps.now() + timing.upWithinMs;
     let pid: number | null = null;
     while (deps.now() < deadline) {
@@ -3886,7 +3952,21 @@ export async function applyConfig(deps: ApplyDeps): Promise<ApplyOutcome> {
     if (target === null) throw new Error("dorothy-config has no main branch");
     if (target === status.appliedSha || target === status.rolledBackSha) return "unchanged";
     await deps.git.resetHard(target);
-    copyConfig(deps.paths.checkout, deps.paths.home);
+    try {
+        copyConfig(deps.paths.checkout, deps.paths.home);
+    } catch (error) {
+        // Recorded like a rollback: the running config stays, and the head is not retried.
+        const lastError = `config ${target} not applied: ${errorMessage(error)}`;
+        writeJson(deps.paths.applyStatus, {
+            ...status,
+            rolledBackSha: target,
+            configRolledBack: true,
+            lastApplyAt: iso(deps.now()),
+            lastError,
+        });
+        deps.log(lastError);
+        return "failed";
+    }
     warnAboutSkills(deps);
     if (await gatewayTest(deps, await bounce(deps))) {
         passed(deps, status, target);
@@ -3921,14 +4001,14 @@ export async function bootCheck(deps: ApplyDeps, registerWithinMs = 120_000): Pr
 - [ ] **Step 4: Run the tests**
 
 Run: `mise exec -- node --test hermes/src/config.test.ts`
-Expected: 12 pass.
+Expected: 14 pass.
 
 - [ ] **Step 5: Commit**
 
 ```bash
 bunx biome check --write hermes/src && bun run typecheck
 git add hermes/src/config.ts hermes/src/config.test.ts
-git commit -m "feat: Apply config with a gateway test and rollback"
+git commit -m "feat: Apply config with gateway test and rollback"
 ```
 
 ---
@@ -3970,7 +4050,7 @@ import { type Bundle, encodeFile, writeBundle } from "./bundle.ts";
 import { dumpDatabase } from "./dump.ts";
 import type { ContainerPaths } from "./hermes.ts";
 import type { PlatformRegistry } from "./settings.ts";
-import { readJson, writeJson } from "./status.ts";
+import { type ApplyStatus, readJson, writeJson } from "./status.ts";
 import { bareRepo, fakeClock, fakeHermes, GIT_ENV, pushFiles, tempDir, writeFiles } from "./test-helpers.ts";
 
 const GOOD = "skills:\n    external_dirs:\n        - /opt/data/dorothy/config/skills\n";
@@ -4190,6 +4270,16 @@ test("a config repository without config.yaml is named", async (t) => {
     await assert.rejects(bootstrap(deps), /config\.yaml is missing/);
 });
 
+test("a config repository without config.yaml boots the last-good copy", async (t) => {
+    const { configSha, paths, logs, deps } = await setup(t, { "SOUL.md": "soul" });
+    writeFiles(join(paths.home, "dorothy/last-good"), { "SOUL.md": "old soul", "config.yaml": GOOD });
+    await bootstrap(deps);
+    assert.equal(readFileSync(join(paths.home, "SOUL.md"), "utf8"), "old soul");
+    assert.equal(readFileSync(join(paths.home, "config.yaml"), "utf8"), GOOD);
+    assert.equal(readJson<ApplyStatus>(join(paths.home, "dorothy/status/apply.json"))?.rolledBackSha, configSha);
+    assert.ok(logs.some((m) => m.includes("config.yaml is missing")));
+});
+
 test("a config.yaml without the skills directory warns", async (t) => {
     const { logs, deps } = await setup(t, { "SOUL.md": "soul", "config.yaml": "model: x\n" });
     await bootstrap(deps);
@@ -4214,7 +4304,7 @@ Expected: FAIL, module not found.
 import { existsSync, renameSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { type Bundle, BundleError, type BundleFile, fileBytes, openBundle, type OpenedBundle, readTrustedBundle } from "./bundle.ts";
-import { configGit, configPaths, copyConfig, skillsWarning } from "./config.ts";
+import { configGit, configPaths, copyConfig, hasLastGood, skillsWarning } from "./config.ts";
 import { restoreDatabase } from "./dump.ts";
 import { emptyDirectory, removeUnlisted, skillDirectory, writeTreeFile } from "./files.ts";
 import type { Git } from "./git.ts";
@@ -4369,8 +4459,23 @@ export async function bootstrap(deps: BootstrapDeps): Promise<void> {
     if (head !== null && head === status.rolledBackSha) {
         deps.log(`keeping the last-good config: ${head} was rolled back`);
     } else {
-        copyConfig(paths.checkout, home);
-        deps.log(`config ${head}`);
+        try {
+            copyConfig(paths.checkout, home);
+            deps.log(`config ${head}`);
+        } catch (error) {
+            // A broken config never takes the agent offline when a last-good copy exists.
+            if (!hasLastGood(paths)) throw error;
+            copyConfig(paths.lastGood, home);
+            const lastError = `config ${head} not applied: ${errorMessage(error)}`;
+            writeJson(paths.applyStatus, {
+                ...status,
+                ...(head === null ? {} : { rolledBackSha: head }),
+                configRolledBack: true,
+                lastApplyAt: iso(deps.now()),
+                lastError,
+            });
+            deps.log(`${lastError}; booting the last-good config`);
+        }
     }
     const warning = skillsWarning(readText(join(home, "config.yaml")));
     if (warning) deps.log(warning);
@@ -4398,7 +4503,7 @@ if (import.meta.main) {
 - [ ] **Step 4: Run the tests**
 
 Run: `mise exec -- node --test hermes/src/bootstrap.test.ts`
-Expected: 14 pass.
+Expected: 16 pass.
 
 - [ ] **Step 5: Commit**
 
