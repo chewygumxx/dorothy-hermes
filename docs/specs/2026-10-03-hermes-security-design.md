@@ -60,7 +60,7 @@ container is treated as wholly agent-controlled.
 | LLM credential                      | `hermes` environment           | Spend; provider account access                       |
 | Platform tokens                     | `hermes` environment           | Impersonating Dorothy on messaging platforms         |
 | Transcripts                         | `state.db`, `state.sql`        | Everything said to and done by the agent             |
-| Config deploy key, webhook secret   | `hermes` secrets               | Low: read config, trigger a redundant apply          |
+| Config deploy key, webhook secret   | `hermes` environment           | Low: read config, trigger a redundant apply          |
 | `TUNNEL_TOKEN`                      | `cloudflared` environment      | Running a connector for the tunnel                   |
 | `DOTENV_PRIVATE_KEY`                | server `.env.keys`             | Decrypts every secret above                          |
 
@@ -96,9 +96,10 @@ skills that every later cold boot restores.
 
 **Mitigation.**
 
-- The key is a compose secret listed only by `dorothy-sync`. It never enters
-  the `hermes` container's environment, filesystem or volumes, so neither
-  root inside that container nor `docker exec` into it can find it.
+- `DOROTHY_MEMORY_DEPLOY_KEY` is passed only to `dorothy-sync`, which writes
+  it to a `0600` file on its own tmpfs. It never enters the `hermes`
+  container's environment, filesystem or volumes, so neither root inside
+  that container nor `docker exec` into it can find it.
 - `dorothy-sync` runs no agent code, listens on no port, and sits on its own
   network (S3).
 - A ruleset on `dorothy-memory` `main` blocks force pushes and branch
@@ -106,9 +107,9 @@ skills that every later cold boot restores.
   private personal repositories need for rulesets). This is defence in depth;
   the sidecar never forces.
 
-**Verification.** Smoke: `docker inspect` lists no `memory_deploy_key` for
-`hermes`; inside `hermes`, `/run/secrets` lacks it and no process environment
-holds it.
+**Verification.** Smoke: `docker inspect` shows no
+`DOROTHY_MEMORY_DEPLOY_KEY` in the `hermes` environment, and no process
+environment or file inside `hermes` holds the key's value.
 
 ### S2. The agent smuggles data into the sidecar
 
@@ -121,20 +122,23 @@ symlink would lead it to read its own key and publish it; a path such as
 is a mount point in the sidecar, so only the file name itself is
 agent-controlled. The sidecar:
 
-- Opens it with `O_NOFOLLOW` and checks, with `fstat` on the open descriptor,
-  that it is a regular file no larger than `DOROTHY_BUNDLE_MAX_BYTES`
-  (default 256 MiB). Hardlinks cannot cross mounts.
-- Accepts only the paths, modes and encodings of the bundle format. Any other
-  entry fails the whole cycle.
+- Opens it with `O_NOFOLLOW | O_NONBLOCK` (a FIFO cannot block the open) and
+  checks, with `fstat` on the open descriptor, that it is a regular file no
+  larger than `DOROTHY_BUNDLE_MAX_BYTES` (default 256 MiB). It reads at most
+  the size `fstat` reported, since the agent can append afterwards.
+  Hardlinks cannot cross mounts.
+- Accepts only the paths, modes and encodings of the bundle format, and only
+  its own generation. Any other entry fails the whole cycle.
 - Writes each file itself into its own checkout. It never copies directories
   or follows links, and runs git only in its own checkout (S15).
 
 The bundle's content remains agent-controlled, which is inherent: the agent's
 memory is the agent's to write (S13).
 
-**Verification.** Unit: symlinked, non-regular and oversize bundles; `..`,
-`.git/x`, absolute paths and bad modes; each fails without touching the
-checkout. Smoke: a symlinked bundle is rejected and nothing is pushed.
+**Verification.** Unit: symlinked, FIFO, oversize and growing bundles; `..`,
+`.git/x`, absolute paths, bad modes and a foreign generation; each fails
+without touching the checkout. Smoke: symlinked and FIFO bundles are
+rejected and nothing is pushed.
 
 ### S3. The agent tampers with the sidecar's state
 
@@ -144,9 +148,13 @@ attack the process.
 
 **Mitigation.**
 
-- `dorothy-state` (the checkout and status) is not mounted in `hermes`.
-- `dorothy-restore` is mounted read-only in `hermes`; remounting needs
-  `CAP_SYS_ADMIN`, which no container has (S10).
+- `dorothy-state` (the checkout and generation) is not mounted in `hermes`.
+- `dorothy-restore` (`restore.json`, the sidecar's `status.json`) is mounted
+  read-only in `hermes`; remounting needs `CAP_SYS_ADMIN`, which no container
+  has (S10).
+- The volume roots are handed to UID 10000 by `dorothy-init`, a one-shot
+  container with only `CAP_CHOWN`, no network, and nothing the agent wrote
+  mounted except those roots, which it does not traverse.
 - The sidecar's network, `sync`, is shared with no other service, and the
   sidecar listens on nothing.
 - The sidecar's root filesystem is read-only.
@@ -182,9 +190,10 @@ rewritten, stays in `dorothy-memory` permanently.
 
 **Mitigation.** Before writing the bundle, the snapshot step replaces every
 occurrence of every known secret value with `[REDACTED:<NAME>]` across all
-bundle content. Known values are every file in `/run/secrets`, the
-deployment's secret variables, and any environment variable whose name ends
-in `_TOKEN`, `_KEY`, `_SECRET` or `_PASSWORD`. Each value is matched as
+bundle content. Known values are the deployment's secret variables, any
+environment variable whose name ends in `_TOKEN`, `_KEY`, `_SECRET` or
+`_PASSWORD`, and the same names in `/opt/data/.env` (which holds upstream's
+generated `API_SERVER_KEY`). Each value is matched as
 written, in the hex form the dump uses for blobs, and, for keys, per decoded
 line longer than 20 characters. Values shorter than eight characters are
 skipped. The memory key never reaches the `hermes` container, so it cannot
@@ -210,13 +219,15 @@ session containing the fixture's fake token is pushed redacted.
   `settings.ts` also refuses to start when a platform token lacks its
   allowlist or an allow-all override is set, with the names taken from the
   pinned image's platform registry. A refusal stops the container.
-- At each boot, bootstrap removes deployment-provided variables from
-  `/opt/data/.env` (upstream loads that file over the process environment)
-  and empties the pairing stores, which grant access in addition to the
-  allowlist.
+- At each boot, bootstrap removes from `/opt/data/.env` every variable the
+  deployment provides and every allowlist and allow-all variable in the
+  platform registry (upstream loads that file over the process environment,
+  so an agent-written `GATEWAY_ALLOW_ALL_USERS` would otherwise persist). It
+  empties `/opt/data/pairing/` and `/opt/data/platforms/pairing/`, which
+  grant access in addition to the allowlist.
 
-**Accepted.** DM pairing approval runs as `hermes`, so the agent can approve
-a stranger itself. Such an approval lasts until the next boot.
+**Accepted.** The agent can approve a stranger itself, through DM pairing or
+by editing `.env`. Such an approval lasts until the next boot.
 
 **Verification.** Unit: `settings.ts` refusals; boot cleanup. Smoke: a
 platform token without an allowlist stops the container.
@@ -271,9 +282,11 @@ reachable from outside the compose network.
 
 **Mitigation.** No service declares `ports`. The tunnel routes only the
 webhook hostname. The dashboard runs only when `HERMES_DASHBOARD` is set,
-which this deployment never does. The API server is enabled only in the
-smoke fixture; enabling it in production would require `API_SERVER_KEY` and
-its own review. The sidecar listens on nothing.
+which this deployment never does. Upstream's boot generates an
+`API_SERVER_KEY` into `/opt/data/.env`, which enables the API server (cron
+depends on it); it requires that key, is published nowhere, and is reachable
+at most from `cloudflared` on the compose network, which routes nothing to
+it. Its bind address is an open item. The sidecar listens on nothing.
 
 **Verification.** Smoke: `docker compose config --format json` shows no
 `ports` on any service.
@@ -293,7 +306,9 @@ matters most.
 - no `privileged`, Docker socket, host namespaces or devices
 
 `dorothy-sync` and `cloudflared` set `read_only: true`, `cap_drop: [ALL]` and
-`no-new-privileges`, with tmpfs where they write.
+`no-new-privileges`, with tmpfs where they write; `dorothy-sync` also sets
+`init: true`. `dorothy-init` runs once as root with only `CAP_CHOWN`,
+`read_only: true` and `network_mode: none`.
 
 **Accepted.** A read-only root filesystem for `hermes`: the agent and its
 skills install packages and write caches at runtime, and upstream does not
@@ -306,8 +321,9 @@ support it.
 **Mitigation** (operator checklist):
 
 - Docker with `userns-remap` (or rootless Docker), so root in a container is
-  an unprivileged user on the host. Implementation confirms upstream's s6
-  boot works under it; if not, this item moves to Accepted.
+  an unprivileged user on the host. The bind-mounted `hermes/` must then be
+  world-readable on the host. Implementation confirms upstream's s6 boot
+  works under it; if not, this item moves to Accepted.
 - No inbound ports at all. SSH goes through Cloudflare Access
   (`cloudflared access ssh`) or Tailscale; the host firewall denies all
   inbound traffic. Docker-published ports bypass host firewalls, which S9
@@ -348,8 +364,11 @@ The sidecar refuses a bundle that would delete `sessions/state.sql` or
 restore nor the agent can silently empty the repository.
 
 Recovery: revert the bad commits in `dorothy-memory`, then
-`docker compose down`, remove the `hermes-data` and `dorothy-state` volumes,
-and `mise run up` for a cold boot from the reverted head.
+`docker compose down`, remove the `hermes-data`, `dorothy-state`,
+`dorothy-outbox` and `dorothy-restore` volumes, and `mise run up` for a cold
+boot from the reverted head. Even if the outbox were kept, its bundle carries
+the old generation, which the re-cloned sidecar refuses, so the poisoned
+state cannot be republished over the revert.
 
 Status files and health checks in `hermes` are agent-writable: they are
 operational signals, not security controls.
@@ -361,8 +380,9 @@ operational signals, not security controls.
   release notes and security advisories.
 - Runtime code imports only `node:*`. Development tooling is pinned by mise
   and the lockfile and never ships to the server.
-- GitHub Actions are pinned by commit SHA. Dependabot pull requests run
-  without repository secrets, and the smoke test needs none.
+- GitHub Actions are pinned by commit SHA (the template's `@v1` references
+  are converted in the first plan). Dependabot pull requests run without
+  repository secrets, and the smoke test needs none.
 - Third-party skills from the Hermes hub load into the agent process and are
   installed only after reading them.
 
@@ -394,12 +414,13 @@ S13.
 
 Collected from the verification notes above:
 
-1. The memory key is absent from `hermes`: inspect, `/run/secrets`, process
-   environments (S1).
-2. A symlinked bundle is rejected and nothing is pushed (S2).
+1. The memory key is absent from `hermes`: inspect, process environments,
+   files (S1).
+2. A symlinked bundle and a FIFO bundle are rejected and nothing is pushed
+   (S2).
 3. Root in `hermes` cannot write the restore volume or reach the sidecar
    (S3).
 4. A fixture session containing a fake token is pushed redacted (S5).
 5. A platform token without an allowlist stops the container (S6).
 6. No service publishes ports (S9).
-7. All three services run hardened, unmodified (S10).
+7. All four services run hardened, unmodified (S10).
