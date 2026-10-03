@@ -1,15 +1,4 @@
 ---
-__cgxx: |
-  # vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3:
-  # SPDX-License-Identifier: GPL-3.0-only
-
-  #
-  #
-  # ~chewygumxx/dorothy-hermes.git
-  # ::: :/.claude/memory/MEMORY.md
-  #
-  #
-
 ctime: 2026-10-04
 title: MEMORY.md
 description: Repository memories
@@ -17,6 +6,17 @@ tags:
   - claude
   - llm
 ---
+
+<!--
+# SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/.claude/memory/MEMORY.md
+#
+#
+-->
 
 # MEMORY.md
 
@@ -30,3 +30,5 @@ tags:
   mistakes are in scope; guard with rulesets, not "outside the model"
 - [No Python](./no-python.md): TypeScript first, bash if impractical; Python
   only as upstream's code inside the image
+
+<!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->

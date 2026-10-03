@@ -1,15 +1,4 @@
 ---
-__cgxx: |
-  # vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3:
-  # SPDX-License-Identifier: GPL-3.0-only
-
-  #
-  #
-  # ~chewygumxx/dorothy-hermes.git
-  # ::: :/.claude/memory/no-python.md
-  #
-  #
-
 name: no-python
 description: >-
   Write no Python in this repository: TypeScript first, bash if TypeScript is
@@ -19,6 +8,17 @@ metadata:
   type: feedback
   modified: 2026-10-04T04:30:00.000Z
 ---
+
+<!--
+# SPDX-License-Identifier: GPL-3.0-only
+
+#
+#
+# ~chewygumxx/dorothy-hermes.git
+# ::: :/.claude/memory/no-python.md
+#
+#
+-->
 
 The user dislikes Python ("an irrational disdain") and wants none in this
 repository. New scripts are TypeScript (Node type stripping, `node:*` only,
@@ -35,3 +35,5 @@ heredoc in `smoke/run.sh` run by the image's Python.
 image (it has `/usr/local/bin/node`). When only upstream's Python can answer,
 inline the minimum into a shell heredoc and say why in a comment. Python
 tooling installed by mise (uv, yamllint) is fine; it is not repository code.
+
+<!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->
