@@ -13,7 +13,12 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { type TestContext, test } from "node:test";
-import { formatRegistry, type Judgments, readRegistry } from "./platforms.ts";
+import {
+    formatRegistry,
+    type Judgments,
+    readRegistry,
+    registryDrift,
+} from "./platforms.ts";
 
 /** A small upstream tree in the shapes the pinned image uses. */
 const UPSTREAM: Record<string, string> = {
@@ -200,4 +205,22 @@ test("the virtualenv and upstream's tests are not swept", (t) => {
         "gateway/test_helpers.py": `BAR_ALLOW_FROM = "*"\n`,
     });
     assert.doesNotThrow(() => readRegistry(root, JUDGED));
+});
+
+test("drift names each variable and platform that changed", (t) => {
+    const committed = readRegistry(upstream(t), JUDGED);
+    assert.deepEqual(registryDrift(committed, committed), []);
+    const fresh = structuredClone(committed);
+    fresh.extraAllowVariables.push("NEWCHAT_ALLOW_FROM");
+    fresh.extraAllowVariables = fresh.extraAllowVariables.filter(
+        (name) => name !== "IRC_ALLOWED_USERS",
+    );
+    fresh.platforms.telegram.enabledBy = ["TELEGRAM_BOT_TOKEN", "TELEGRAM_X"];
+    delete fresh.platforms.relay;
+    assert.deepEqual(registryDrift(committed, fresh), [
+        "extraAllowVariables gains NEWCHAT_ALLOW_FROM",
+        "extraAllowVariables loses IRC_ALLOWED_USERS",
+        "platforms.relay is gone",
+        "platforms.telegram changed",
+    ]);
 });

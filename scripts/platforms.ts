@@ -331,6 +331,49 @@ export function formatRegistry(registry: PlatformRegistry): string {
     return `${JSON.stringify(sortKeys(registry), null, 4)}\n`;
 }
 
+/** What changed from the committed registry to a fresh one, one line each. */
+export function registryDrift(
+    committed: PlatformRegistry,
+    fresh: PlatformRegistry,
+): string[] {
+    const drift: string[] = [];
+    const was = new Set(committed.extraAllowVariables);
+    const now = new Set(fresh.extraAllowVariables);
+    for (const name of [...now].filter((n) => !was.has(n)).sort())
+        drift.push(`extraAllowVariables gains ${name}`);
+    for (const name of [...was].filter((n) => !now.has(n)).sort())
+        drift.push(`extraAllowVariables loses ${name}`);
+    for (const key of ["globalAllowlist", "globalAllowAll"] as const)
+        if (committed[key] !== fresh[key])
+            drift.push(`${key} is now ${fresh[key]}`);
+    const platforms = new Set([
+        ...Object.keys(committed.platforms),
+        ...Object.keys(fresh.platforms),
+    ]);
+    for (const platform of [...platforms].sort()) {
+        const before = committed.platforms[platform];
+        const after = fresh.platforms[platform];
+        if (!after) drift.push(`platforms.${platform} is gone`);
+        else if (!before) drift.push(`platforms.${platform} is new`);
+        else if (
+            JSON.stringify(sortKeys(before)) !== JSON.stringify(sortKeys(after))
+        )
+            drift.push(`platforms.${platform} changed`);
+    }
+    return drift;
+}
+
 if (import.meta.main) {
-    process.stdout.write(formatRegistry(readRegistry(process.argv[2])));
+    const [flag, file, root] = process.argv.slice(2);
+    if (flag === "--check") {
+        // Exit 1 when the committed file no longer matches upstream.
+        const committed = JSON.parse(
+            readFileSync(file, "utf8"),
+        ) as PlatformRegistry;
+        const drift = registryDrift(committed, readRegistry(root));
+        for (const line of drift) process.stderr.write(`${line}\n`);
+        process.exitCode = drift.length > 0 ? 1 : 0;
+    } else {
+        process.stdout.write(formatRegistry(readRegistry(flag)));
+    }
 }
