@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
     standard:
-        uses: chewygumxx/.github/.github/workflows/standard.yaml@6a93bf782466c25b173b05d92d8b5b10dc356441 # v1
+        uses: chewygumxx/.github/.github/workflows/standard.yaml@ad8ecf2eedbc2fe9fa8228c9b706450c8cb77618 # v1
         with:
             metadata-client-id: ${{ vars.METADATA_APP_CLIENT_ID }}
             # `bun run check` lints YAML with the repository's .yamllint.yaml,
@@ -50,7 +50,7 @@ jobs:
         if: ${{ !cancelled() }}
         permissions:
             contents: read
-        uses: chewygumxx/.github/.github/workflows/lint.yaml@6a93bf782466c25b173b05d92d8b5b10dc356441 # v1
+        uses: chewygumxx/.github/.github/workflows/lint.yaml@ad8ecf2eedbc2fe9fa8228c9b706450c8cb77618 # v1
         with:
             ref: ${{ needs.standard.outputs.sha }}
 
