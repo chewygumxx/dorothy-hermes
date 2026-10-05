@@ -1,22 +1,20 @@
 ---
-__cgxx: |
-  # vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3:
-  # SPDX-License-Identifier: GPL-3.0-only
-
-  #
-  #
-  # ~chewygumxx/dorothy-hermes.git
-  # ::: :/.claude/CLAUDE.md
-  #
-  #
-
 ctime: 2026-09-29
+mtime: 2026-10-05
+spdx: GPL-3.0-only
 title: CLAUDE.md
-description: "Repository instructions"
+description: How Claude Code commits and reports compaction in this repository
 tags:
   - claude
   - llm
 ---
+
+<!--
+   -
+   - ~chewygumxx/dorothy-hermes.git
+   - ::: :/.claude/CLAUDE.md
+   -
+   -->
 
 # CLAUDE.md
 
@@ -31,3 +29,5 @@ newline-delimited items to your response:
 - Appraisal rating scaled 1-100
 - Risk assessment rating scaled 1-100
 - Terse single-sentence justification.
+
+<!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->

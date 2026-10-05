@@ -1,25 +1,28 @@
 ---
-__cgxx: |
-  # vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3:
-  # SPDX-License-Identifier: GPL-3.0-only
-
-  #
-  #
-  # ~chewygumxx/dorothy-hermes.git
-  # ::: :/.claude/agents/security-boundary-reviewer.md
-  #
-  #
-
 ctime: 2026-10-04
+mtime: 2026-10-05
+spdx: GPL-3.0-only
+title: Security boundary reviewer
 name: security-boundary-reviewer
 description: >-
   Reviews a diff or branch against the security design's trust boundary
   between dorothy-init/dorothy-sync and the agent-controlled hermes
   container. Use before merging any change to compose.yaml, hermes/,
   smoke/, or code that reads agent output, and after an upstream bump.
+tags:
+  - llm
+  - claude
+  - security
 tools: Read, Grep, Glob, Bash
 model: opus
 ---
+
+<!--
+   -
+   - ~chewygumxx/dorothy-hermes.git
+   - ::: :/.claude/agents/security-boundary-reviewer.md
+   -
+   -->
 
 You review changes to Dorothy for one thing: whether the trust boundary in
 `docs/specs/2026-10-03-hermes-security-design.md` still holds. Read its Trust
@@ -78,3 +81,5 @@ change ships. Give each: the S identifier, file and line, a concrete
 failure scenario (inputs and state, then the wrong outcome), and the
 smallest fix. List separately anything you declined to judge, with why.
 Do not edit files.
+
+<!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->

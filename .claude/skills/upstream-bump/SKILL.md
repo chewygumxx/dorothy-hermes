@@ -1,23 +1,26 @@
 ---
-__cgxx: |
-  # vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3:
-  # SPDX-License-Identifier: GPL-3.0-only
-
-  #
-  #
-  # ~chewygumxx/dorothy-hermes.git
-  # ::: :/.claude/skills/upstream-bump/SKILL.md
-  #
-  #
-
 ctime: 2026-10-04
+mtime: 2026-10-05
+spdx: GPL-3.0-only
+title: Bump the upstream Hermes image
 name: upstream-bump
 description: >-
   Re-run the upstream probe's checks when the pinned nousresearch/hermes-agent
   image changes, as in a Dependabot docker-compose pull request or a manual
   bump, before it merges.
+tags:
+  - llm
+  - claude
+  - hermes
 disable-model-invocation: true
 ---
+
+<!--
+   -
+   - ~chewygumxx/dorothy-hermes.git
+   - ::: :/.claude/skills/upstream-bump/SKILL.md
+   -
+   -->
 
 # Bump the upstream Hermes image
 
@@ -78,3 +81,5 @@ branch, commit each step on its own, and stop at the first check that fails.
 
 - Append a dated section to the probe note: tag, digest, Node version,
   platform registry diff, smoke result, and any new ruling.
+
+<!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->
