@@ -1,16 +1,7 @@
 ---
-__cgxx: |
-  # vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3:
-  # SPDX-License-Identifier: GPL-3.0-only
-
-  #
-  #
-  # ~chewygumxx/dorothy-hermes.git
-  # ::: :/docs/specs/2026-10-03-hermes-deployment-design.md
-  #
-  #
-
 ctime: 2026-10-03
+mtime: 2026-10-05
+spdx: GPL-3.0-only
 title: Hermes deployment design
 description: "Design spec for deploying Dorothy as a containerised Hermes Agent"
 tags:
@@ -18,6 +9,13 @@ tags:
   - hermes
   - spec
 ---
+
+<!--
+   -
+   - ~chewygumxx/dorothy-hermes.git
+   - ::: :/docs/specs/2026-10-03-hermes-deployment-design.md
+   -
+   -->
 
 # Hermes deployment design
 
@@ -652,3 +650,5 @@ Three plans, each ending with green CI:
    `compose.yaml` and the smoke test.
 3. Config delivery: `webhook`, the boot check, `cloudflared` and the
    operator checklists.
+
+<!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->

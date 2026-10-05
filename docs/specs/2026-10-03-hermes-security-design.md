@@ -1,16 +1,7 @@
 ---
-__cgxx: |
-  # vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3:
-  # SPDX-License-Identifier: GPL-3.0-only
-
-  #
-  #
-  # ~chewygumxx/dorothy-hermes.git
-  # ::: :/docs/specs/2026-10-03-hermes-security-design.md
-  #
-  #
-
 ctime: 2026-10-03
+mtime: 2026-10-05
+spdx: GPL-3.0-only
 title: Hermes deployment security design
 description: "Threat model and planned mitigations for the Hermes deployment"
 tags:
@@ -19,6 +10,13 @@ tags:
   - security
   - spec
 ---
+
+<!--
+   -
+   - ~chewygumxx/dorothy-hermes.git
+   - ::: :/docs/specs/2026-10-03-hermes-security-design.md
+   -
+   -->
 
 # Hermes deployment security design
 
@@ -429,3 +427,5 @@ Collected from the verification notes above:
 5. A platform token without an allowlist stops the container (S6).
 6. No service publishes ports (S9).
 7. All four services run hardened, unmodified (S10).
+
+<!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->

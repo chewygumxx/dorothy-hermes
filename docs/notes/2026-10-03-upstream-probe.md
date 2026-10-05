@@ -1,16 +1,7 @@
 ---
-__cgxx: |
-  # vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3:
-  # SPDX-License-Identifier: GPL-3.0-only
-
-  #
-  #
-  # ~chewygumxx/dorothy-hermes.git
-  # ::: :/docs/notes/2026-10-03-upstream-probe.md
-  #
-  #
-
 ctime: 2026-10-03
+mtime: 2026-10-05
+spdx: GPL-3.0-only
 title: Upstream image probe
 description: "Facts about the pinned Hermes image that the plan depends on"
 tags:
@@ -18,6 +9,13 @@ tags:
   - hermes
   - notes
 ---
+
+<!--
+   -
+   - ~chewygumxx/dorothy-hermes.git
+   - ::: :/docs/notes/2026-10-03-upstream-probe.md
+   -
+   -->
 
 # Upstream image probe
 
@@ -234,3 +232,5 @@ before the gateway starts, so the live-writer refusal does not apply to it.
   settings, so the gateway test cannot catch YAML errors. A config with a
   syntax error is recorded as applied and copied to `last-good/`. Task 18
   records this in the spec.
+
+<!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->

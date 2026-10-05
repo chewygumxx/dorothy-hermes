@@ -1,16 +1,7 @@
 ---
-__cgxx: |
-  # vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3:
-  # SPDX-License-Identifier: GPL-3.0-only
-
-  #
-  #
-  # ~chewygumxx/dorothy-hermes.git
-  # ::: :/docs/plans/2026-10-03-hermes-live-deploy.md
-  #
-  #
-
 ctime: 2026-10-03
+mtime: 2026-10-05
+spdx: GPL-3.0-only
 title: Hermes live deploy implementation plan
 description: "Plan from an upstream probe to a live, observed deployment"
 tags:
@@ -18,6 +9,13 @@ tags:
   - hermes
   - plan
 ---
+
+<!--
+   -
+   - ~chewygumxx/dorothy-hermes.git
+   - ::: :/docs/plans/2026-10-03-hermes-live-deploy.md
+   -
+   -->
 
 # Hermes live deploy implementation plan
 
@@ -6844,3 +6842,5 @@ bun run check
 git add docs/specs README.md
 git commit -m "docs: Fold the probe and live run into the specs"
 ```
+
+<!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->

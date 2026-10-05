@@ -1,16 +1,7 @@
 ---
-__cgxx: |
-  # vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3:
-  # SPDX-License-Identifier: GPL-3.0-only
-
-  #
-  #
-  # ~chewygumxx/dorothy-hermes.git
-  # ::: :/docs/agents/subagent-ledger.md
-  #
-  #
-
 ctime: 2026-10-03
+mtime: 2026-10-05
+spdx: GPL-3.0-only
 title: Subagent ledger protocol
 description: "How subagents record work so an interrupted run is recoverable"
 tags:
@@ -18,6 +9,13 @@ tags:
   - llm
   - claude
 ---
+
+<!--
+   -
+   - ~chewygumxx/dorothy-hermes.git
+   - ::: :/docs/agents/subagent-ledger.md
+   -
+   -->
 
 # Subagent ledger protocol
 
@@ -174,3 +172,5 @@ and your final message lost. Follow the subagent ledger protocol:
   ranked, counts of the rest, and the ledger path.
 - No secret values in the ledger.
 ```
+
+<!-- vim:set expandtab shiftwidth=2 filetype=markdown foldlevel=3: -->
