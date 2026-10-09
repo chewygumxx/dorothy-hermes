@@ -6,7 +6,7 @@
       "name": "dorothy-hermes",
       "devDependencies": {
         "@biomejs/biome": "2.5.14",
-        "@chewygumxx/biome-config": "^1.0.0",
+        "@chewygumxx/biome-config": "^1.0.1",
         "@chewygumxx/commitlint-config": "^1.1.0",
         "@chewygumxx/cz-commitlint": "^1.0.2",
         "@chewygumxx/remark-preset": "^1.0.3",
@@ -45,7 +45,7 @@
 
     "@biomejs/cli-win32-x64": ["@biomejs/cli-win32-x64@2.5.14", "", { "os": "win32", "cpu": "x64" }, "sha512-oJWmBhoHsnhUKIke+0gXDX0mltJrWHA1UyHsrTlXwX0TL64ilVZAo+TYZm97baecV0esBdpzy3k96q+09JaZUQ=="],
 
-    "@chewygumxx/biome-config": ["@chewygumxx/biome-config@1.0.0", "", { "peerDependencies": { "@biomejs/biome": "^2.5.14" } }, "sha512-YUj9nVuAVdTAyzm/Bb3u4eeSIn5hNgfImH1CSE0kL0vkuNX2Iuzx4/YOGs0ZVvOhUzkX863psydyInwnZqDVwQ=="],
+    "@chewygumxx/biome-config": ["@chewygumxx/biome-config@1.0.1", "", { "peerDependencies": { "@biomejs/biome": "^2.5.14" } }, "sha512-l3NhojIMYGCHAcjBtKRTdTq2mihdnKidhxHGYf14etSLxE74ctcx9BDt6/+iQzvr3f7rjUzJX8mALSTkn5fQ9w=="],
 
     "@chewygumxx/commitlint-config": ["@chewygumxx/commitlint-config@1.1.0", "", { "dependencies": { "@commitlint/config-conventional": "^21.2.2", "@commitlint/types": "^21.2.2", "conventional-changelog-conventionalcommits": "^10.4.0" }, "peerDependencies": { "@commitlint/cli": "^21.2.2" } }, "sha512-4C6E86NXrp+z1wb/CW27FZ+AEs2gcxPNcG9lIaNSkxF6Kym43dRHR3jrqu9FEiUVespS0UO4BIU3iF+/JkTO9A=="],
 
