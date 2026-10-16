@@ -36,7 +36,7 @@ concurrency:
 
 jobs:
     standard:
-        uses: chewygumxx/.github/.github/workflows/standard.yaml@6a93bf782466c25b173b05d92d8b5b10dc356441 # v1
+        uses: chewygumxx/.github/.github/workflows/standard.yaml@913308d7d0748c9111aeda71c139ed1d6cef2311 # v1
         with:
             metadata-client-id: ${{ vars.METADATA_APP_CLIENT_ID }}
             # `bun run check` lints YAML with the repository's .yamllint.yaml,
