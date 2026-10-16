@@ -50,7 +50,7 @@ jobs:
         if: ${{ !cancelled() }}
         permissions:
             contents: read
-        uses: chewygumxx/.github/.github/workflows/lint.yaml@6a93bf782466c25b173b05d92d8b5b10dc356441 # v1
+        uses: chewygumxx/.github/.github/workflows/lint.yaml@913308d7d0748c9111aeda71c139ed1d6cef2311 # v1
         with:
             ref: ${{ needs.standard.outputs.sha }}
 
