@@ -19,7 +19,7 @@ model: opus
 
 <!--
    -
-   - ~chewygumxx/dorothy-hermes.git
+   - ~xxdorothy/hermes.git
    - ::: :/.claude/agents/security-boundary-reviewer.md
    -
    -->
@@ -56,18 +56,18 @@ Every finding is a breach of one of the spec's two rules:
   wrote (bundles, `.env`, `config.yaml`, symlinks, FIFOs, sizes) without
   validating it, or does it share writable state with `hermes`?
 - **Publishing:** can any path force-push, or publish an empty or
-  interrupted state over `dorothy-memory`? Earlier findings F003 and F004
+  interrupted state over `memory`? Earlier findings F003 and F004
   were exactly this: two ordinary failures in a row.
 - **S5 and S6:** do secrets stay out of transcripts, and does every platform
   token still need its allowlist at boot?
-- **S7, config:** can a `dorothy-config` push execute code, or leave a broken
+- **S7, config:** can a `hermes-config` push execute code, or leave a broken
   config recorded as last-good?
 - **S10, capabilities:** is `cap_add` still minimal (CHOWN, DAC_OVERRIDE,
   SETUID, SETGID, KILL), with no new device, privilege or host namespace?
 - **S14 and S15:** is the image still pinned by digest, and git transport
   still pinned to `hermes/known_hosts`?
 - **Owner mistakes:** the owner's own errors are in scope (a `.gitignore`
-  committed to `dorothy-memory`, a wrong ruleset, a secret pasted in plain).
+  committed to `memory`, a wrong ruleset, a secret pasted in plain).
   Prefer a mechanical guard (ruleset, CI check, refusal in code) over
   calling the mistake out of scope.
 
