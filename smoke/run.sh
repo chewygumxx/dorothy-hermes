@@ -4,7 +4,7 @@
 
 #
 #
-# ~chewygumxx/dorothy-hermes.git
+# ~xxdorothy/hermes.git
 # ::: :/smoke/run.sh
 #
 #
@@ -24,7 +24,7 @@ export SMOKE_REPOS="$work/repos"
 export DOROTHY_HOST=smoke
 export DOROTHY_SYNC_INTERVAL=60
 export DOROTHY_CONFIG_REPO=file:///fixtures/config.git
-export DOROTHY_CONFIG_REPO_NAME=smoke/dorothy-config
+export DOROTHY_CONFIG_REPO_NAME=smoke/hermes-config
 export DOROTHY_MEMORY_REPO=file:///fixtures/memory.git
 export DOROTHY_SMOKE_TOKEN=dorothy-fake-token-0123456789abcdef
 
@@ -167,12 +167,12 @@ socket.on('error', (error) => { console.log(error.code); process.exit(); });
 setTimeout(() => { console.log('timeout'); process.exit(); }, 3000);")
 case "$reach" in open | ECONNREFUSED) fail "hermes reached the sidecar ($reach)" ;; esac
 
-say "step 2 and S5: a snapshot reaches dorothy-memory, redacted"
+say "step 2 and S5: a snapshot reaches the memory repo, redacted"
 before=$(memory_head)
 snapshot_once || fail "snapshot --once failed"
 wait_for 120 memory_moved "$before" || fail "the sidecar did not publish"
 memory_show sessions/state.sql >"$work/state.sql"
-grep -qF "$DOROTHY_SMOKE_TOKEN" "$work/state.sql" && fail "the fake token reached dorothy-memory"
+grep -qF "$DOROTHY_SMOKE_TOKEN" "$work/state.sql" && fail "the fake token reached the memory repo"
 grep -qF "[REDACTED:DOROTHY_SMOKE_TOKEN]" "$work/state.sql" || fail "the fake token was not redacted"
 node "$root/smoke/restore-check.mts" "$work/state.sql" zebracorn 東京 || fail "state.sql does not restore"
 
@@ -221,7 +221,7 @@ say "final snapshot and warm boot: a stop publishes, a restart restores nothing"
 as_hermes sh -c 'printf "final\n" > /opt/data/memories/FINAL.md'
 marker=$(in_hermes cat /opt/data/dorothy/restored)
 compose stop || fail "the stack did not stop"
-memory_show memories/FINAL.md | grep -q final || fail "the final snapshot did not reach dorothy-memory"
+memory_show memories/FINAL.md | grep -q final || fail "the final snapshot did not reach the memory repo"
 compose up -d --wait --wait-timeout 600 || fail "the warm boot did not become healthy"
 [ "$(in_hermes cat /opt/data/dorothy/restored)" = "$marker" ] || fail "the warm boot restored again"
 in_hermes test -f /opt/data/memories/FINAL.md || fail "the warm boot lost memories/FINAL.md"

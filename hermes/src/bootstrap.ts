@@ -3,7 +3,7 @@
 
 //
 //
-// ~chewygumxx/dorothy-hermes.git
+// ~xxdorothy/hermes.git
 // ::: :/hermes/src/bootstrap.ts
 //
 //
@@ -183,7 +183,7 @@ async function syncCheckout(
         }
     } else {
         await retry(
-            "clone dorothy-config",
+            "clone hermes-config",
             async () => {
                 rmSync(git.dir, { recursive: true, force: true });
                 await git.clone(url);
@@ -192,7 +192,7 @@ async function syncCheckout(
         );
     }
     const remote = await git.remoteHead();
-    if (remote === null) throw new Error("dorothy-config has no main branch");
+    if (remote === null) throw new Error("hermes-config has no main branch");
     await git.resetHard(remote);
 }
 
@@ -256,7 +256,7 @@ async function restore(deps: BootstrapDeps): Promise<void> {
                 "optimize-storage skipped its work; CJK search may miss restored sessions",
             );
         }
-        deps.log(`restored dorothy-memory ${snapshot.memorySha}`);
+        deps.log(`restored memory repo ${snapshot.memorySha}`);
     }
     writeJson(marker, {
         memorySha: snapshot.memorySha ?? null,

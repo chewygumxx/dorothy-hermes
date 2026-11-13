@@ -3,7 +3,7 @@
 
 //
 //
-// ~chewygumxx/dorothy-hermes.git
+// ~xxdorothy/hermes.git
 // ::: :/hermes/src/config.ts
 //
 //
@@ -257,7 +257,7 @@ export async function applyConfig(deps: ApplyDeps): Promise<ApplyOutcome> {
     const status = readJson<ApplyStatus>(deps.paths.applyStatus) ?? {};
     await deps.git.fetch();
     const target = await deps.git.remoteHead();
-    if (target === null) throw new Error("dorothy-config has no main branch");
+    if (target === null) throw new Error("hermes-config has no main branch");
     if (target === status.appliedSha || target === status.rolledBackSha)
         return "unchanged";
     await deps.git.resetHard(target);

@@ -3,7 +3,7 @@
 
 //
 //
-// ~chewygumxx/dorothy-hermes.git
+// ~xxdorothy/hermes.git
 // ::: :/hermes/src/bootstrap.test.ts
 //
 //
@@ -300,7 +300,7 @@ test("an unreachable remote without a checkout fails after retrying", async (t) 
     };
     await assert.rejects(
         bootstrap(deps),
-        /clone dorothy-config kept failing for 5 s/,
+        /clone hermes-config kept failing for 5 s/,
     );
 });
 

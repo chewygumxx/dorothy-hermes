@@ -3,7 +3,7 @@
 
 //
 //
-// ~chewygumxx/dorothy-hermes.git
+// ~xxdorothy/hermes.git
 // ::: :/hermes/src/sidecar.ts
 //
 //
@@ -149,7 +149,7 @@ export class Sidecar {
         rmSync(join(paths.checkout, ".git/index.lock"), { force: true });
         // The generation is minted only once a clone completes, so a checkout
         // without one is an interrupted clone: serving it would offer hermes
-        // an empty seed while dorothy-memory holds history.
+        // an empty seed while the memory repo holds history.
         const generation = readTrimmed(paths.generation);
         if (generation !== null && existsSync(join(paths.checkout, ".git"))) {
             // A crash mid-mirror leaves a half-written tree that restore.json
@@ -171,7 +171,7 @@ export class Sidecar {
             }
         } else {
             await retry(
-                "clone dorothy-memory",
+                "clone the memory repo",
                 async () => {
                     rmSync(paths.checkout, { recursive: true, force: true });
                     await this.#git.clone(settings.memoryRepo);
@@ -262,7 +262,7 @@ export class Sidecar {
         }
         const state = collectFile(paths.checkout, "sessions/state.sql");
         if (!state)
-            throw new Error(`dorothy-memory ${head} has no sessions/state.sql`);
+            throw new Error(`memory repo ${head} has no sessions/state.sql`);
         const jobs = collectFile(paths.checkout, "cron/jobs.json");
         const files = [
             state,

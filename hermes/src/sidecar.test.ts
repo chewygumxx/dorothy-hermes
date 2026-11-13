@@ -3,7 +3,7 @@
 
 //
 //
-// ~chewygumxx/dorothy-hermes.git
+// ~xxdorothy/hermes.git
 // ::: :/hermes/src/sidecar.test.ts
 //
 //
@@ -334,7 +334,7 @@ test("an interrupted first clone is cloned again, never served as a seed", async
     renameSync(bare, `${bare}.away`);
     await assert.rejects(
         new Sidecar(deps).start(),
-        /clone dorothy-memory kept failing/,
+        /clone the memory repo kept failing/,
     );
     assert.equal(restoreOf(deps.paths), null);
     renameSync(`${bare}.away`, bare);
