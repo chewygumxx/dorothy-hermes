@@ -3,7 +3,7 @@
 
 //
 //
-// ~chewygumxx/dorothy-hermes.git
+// ~xxdorothy/hermes.git
 // ::: :/hermes/src/settings.test.ts
 //
 //
@@ -48,13 +48,13 @@ const registry: PlatformRegistry = {
 };
 
 const base = {
-    DOROTHY_CONFIG_REPO: "git@github.com:me/dorothy-config.git",
+    DOROTHY_CONFIG_REPO: "git@github.com:me/hermes-config.git",
     DOROTHY_CONFIG_DEPLOY_KEY: KEY,
 };
 
 test("a minimal hermes environment is accepted with defaults", () => {
     const settings = hermesSettings(base, registry);
-    assert.equal(settings.configRepoName, "me/dorothy-config");
+    assert.equal(settings.configRepoName, "me/hermes-config");
     assert.equal(settings.interval, 900);
     assert.match(settings.configKey, /^-----BEGIN OPENSSH PRIVATE KEY-----\n/);
 });
@@ -97,16 +97,16 @@ test("a non-GitHub repository needs an explicit name", () => {
 
 test("repository names derive from GitHub URLs", () => {
     assert.equal(
-        repoName("https://github.com/me/dorothy-config"),
-        "me/dorothy-config",
+        repoName("https://github.com/me/hermes-config"),
+        "me/hermes-config",
     );
     assert.equal(
         repoName("git@github.com:me/dorothy.config.git"),
         "me/dorothy.config",
     );
     assert.equal(
-        repoName("ssh://git@ssh.github.com:443/me/dorothy-config.git"),
-        "me/dorothy-config",
+        repoName("ssh://git@ssh.github.com:443/me/hermes-config.git"),
+        "me/hermes-config",
     );
     assert.equal(repoName("file:///tmp/x.git"), null);
 });
@@ -315,7 +315,7 @@ test("plugin platforms' allowlists are refused and cleaned too", () => {
 
 test("sidecar settings validate and default", () => {
     const settings = sidecarSettings({
-        DOROTHY_MEMORY_REPO: "git@github.com:me/dorothy-memory.git",
+        DOROTHY_MEMORY_REPO: "git@github.com:me/memory.git",
         DOROTHY_MEMORY_DEPLOY_KEY: KEY,
         DOROTHY_HOST: "server-1",
     });

@@ -1,15 +1,15 @@
 {
-    "name": "dorothy-hermes",
+    "name": "hermes",
     "description": "Container for deployment of personal Hermes Agent",
     "private": true,
     "keywords": [
         "dorothy"
     ],
     "license": "GPL-3.0-only",
-    "homepage": "https://github.com/chewygumxx/dorothy-hermes",
+    "homepage": "https://github.com/xxdorothy/hermes",
     "repository": {
         "type": "git",
-        "url": "git+https://github.com/chewygumxx/dorothy-hermes.git"
+        "url": "git+https://github.com/xxdorothy/hermes.git"
     },
     "engines": {
         "bun": ">=1.4"

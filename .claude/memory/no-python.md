@@ -14,7 +14,7 @@ metadata:
 
 #
 #
-# ~chewygumxx/dorothy-hermes.git
+# ~xxdorothy/hermes.git
 # ::: :/.claude/memory/no-python.md
 #
 #

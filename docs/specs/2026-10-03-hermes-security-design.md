@@ -13,7 +13,7 @@ tags:
 
 <!--
    -
-   - ~chewygumxx/dorothy-hermes.git
+   - ~xxdorothy/hermes.git
    - ::: :/docs/specs/2026-10-03-hermes-security-design.md
    -
    -->

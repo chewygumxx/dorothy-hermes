@@ -3,16 +3,16 @@
 
 //
 //
-// ~chewygumxx/dorothy-hermes.git
+// ~xxdorothy/hermes.git
 // ::: :/.repo-metadata.jsonc
 //
 //
 
 {
     "$schema": "https://raw.githubusercontent.com/chewygumxx/sync-repo-metadata/refs/tags/v2/schema.json",
-    "name": "dorothy-hermes",
-    "owner": "chewygumxx",
-    "slug": "chewygumxx/dorothy-hermes",
+    "name": "hermes",
+    "owner": "xxdorothy",
+    "slug": "xxdorothy/hermes",
     "default_branch": "main",
     "description": "Container for deployment of personal Hermes Agent",
     "category": "repository",
@@ -22,5 +22,6 @@
         "spdx_id": "GPL-3.0-only",
         "full_name": "GNU General Public License v3.0 only",
         "url": "https://spdx.org/licenses/GPL-3.0-only"
-    }
+    },
+    "archived": true
 }

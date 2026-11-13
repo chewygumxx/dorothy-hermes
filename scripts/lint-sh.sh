@@ -4,7 +4,7 @@
 
 #
 #
-# ~chewygumxx/dorothy-hermes.git
+# ~xxdorothy/hermes.git
 # ::: :/scripts/lint-sh.sh
 #
 #

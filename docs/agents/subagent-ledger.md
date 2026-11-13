@@ -12,7 +12,7 @@ tags:
 
 <!--
    -
-   - ~chewygumxx/dorothy-hermes.git
+   - ~xxdorothy/hermes.git
    - ::: :/docs/agents/subagent-ledger.md
    -
    -->

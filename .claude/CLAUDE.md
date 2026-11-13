@@ -11,7 +11,7 @@ tags:
 
 <!--
    -
-   - ~chewygumxx/dorothy-hermes.git
+   - ~xxdorothy/hermes.git
    - ::: :/.claude/CLAUDE.md
    -
    -->

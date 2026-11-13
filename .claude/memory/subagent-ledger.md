@@ -15,7 +15,7 @@ metadata:
 
 #
 #
-# ~chewygumxx/dorothy-hermes.git
+# ~xxdorothy/hermes.git
 # ::: :/.claude/memory/subagent-ledger.md
 #
 #

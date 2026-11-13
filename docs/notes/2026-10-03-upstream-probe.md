@@ -12,7 +12,7 @@ tags:
 
 <!--
    -
-   - ~chewygumxx/dorothy-hermes.git
+   - ~xxdorothy/hermes.git
    - ::: :/docs/notes/2026-10-03-upstream-probe.md
    -
    -->

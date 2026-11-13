@@ -17,7 +17,7 @@ disable-model-invocation: true
 
 <!--
    -
-   - ~chewygumxx/dorothy-hermes.git
+   - ~xxdorothy/hermes.git
    - ::: :/.claude/skills/upstream-bump/SKILL.md
    -
    -->

@@ -12,7 +12,7 @@ tags:
 
 <!--
    -
-   - ~chewygumxx/dorothy-hermes.git
+   - ~xxdorothy/hermes.git
    - ::: :/docs/plans/2026-10-03-hermes-live-deploy.md
    -
    -->
@@ -5938,7 +5938,7 @@ image reference with Task 1's confirmed one (all three occurrences).
 
 #
 #
-# ~chewygumxx/dorothy-hermes.git
+# ~xxdorothy/hermes.git
 # ::: :/compose.yaml
 #
 #
@@ -6302,7 +6302,7 @@ not touch any hardening key (S10):
 
 #
 #
-# ~chewygumxx/dorothy-hermes.git
+# ~xxdorothy/hermes.git
 # ::: :/smoke/compose.smoke.yaml
 #
 #

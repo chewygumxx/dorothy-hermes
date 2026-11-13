@@ -2,7 +2,7 @@
 ctime: 2026-10-02
 mtime: 2026-10-05
 spdx: GPL-3.0-only
-title: "dorothy-hermes"
+title: "hermes"
 description: "Container for deployment of personal Hermes Agent"
 tags:
   - dorothy
@@ -10,12 +10,12 @@ tags:
 
 <!--
    -
-   - ~chewygumxx/dorothy-hermes.git
+   - ~xxdorothy/hermes.git
    - ::: :/README.md
    -
    -->
 
-# dorothy-hermes
+# hermes
 
 Container for deployment of personal Hermes Agent
 
