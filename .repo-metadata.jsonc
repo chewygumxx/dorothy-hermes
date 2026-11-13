@@ -22,5 +22,6 @@
         "spdx_id": "GPL-3.0-only",
         "full_name": "GNU General Public License v3.0 only",
         "url": "https://spdx.org/licenses/GPL-3.0-only"
-    }
+    },
+    "archived": true
 }
