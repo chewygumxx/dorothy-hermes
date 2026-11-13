@@ -4,7 +4,7 @@
 
 #
 #
-# ~chewygumxx/dorothy-hermes.git
+# ~xxdorothy/hermes.git
 # ::: :/smoke/make-fixture.sh
 #
 #

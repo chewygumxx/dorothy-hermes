@@ -3,7 +3,7 @@
 
 //
 //
-// ~chewygumxx/dorothy-hermes.git
+// ~xxdorothy/hermes.git
 // ::: :/scripts/platforms.ts
 //
 //

@@ -3,7 +3,7 @@
   "configVersion": 0,
   "workspaces": {
     "": {
-      "name": "dorothy-hermes",
+      "name": "hermes",
       "devDependencies": {
         "@biomejs/biome": "2.5.14",
         "@chewygumxx/biome-config": "^1.0.0",

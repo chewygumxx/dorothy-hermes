@@ -13,7 +13,7 @@ metadata:
 
 #
 #
-# ~chewygumxx/dorothy-hermes.git
+# ~xxdorothy/hermes.git
 # ::: :/.claude/memory/deploy-tuning-on-server.md
 #
 #
